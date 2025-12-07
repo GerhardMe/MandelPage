@@ -50,6 +50,7 @@
         cursor: "",
         zoom: "",
         error: "",
+        juliaCursor: "",
     };
 
     function updateStatus() {
@@ -89,6 +90,9 @@
         const sign = cy >= 0 ? "-" : "+";
         const text = `${re} ${sign} ${imAbs}i`;
 
+        status.juliaCursor = `Julia-set: ${text}`;
+        updateStatus();
+
         if (juliaCoordinatesEl) {
             juliaCoordinatesEl.textContent = "Julia-set: " + text;
         }
@@ -126,7 +130,7 @@
     let viewOffsetX = 0;
     let viewOffsetY = 0;
 
-    // ------------------ worker state ------------------
+    // ------------------ worker state: Mandelbrot ------------------
 
     let worker = null;
     let workerReady = false;
@@ -137,6 +141,13 @@
     const STAGES = [{ scale: 4 }, { scale: 1 }, { scale: 0.25 }];
     let currentStage = -1;
     let stagePending = false;
+
+    // ------------------ worker state: Julia GPU ------------------
+
+    let juliaWorker = null;
+    let juliaWorkerReady = false;
+    let juliaNextJobId = 1;
+    let juliaCurrentJobId = null;
 
     // ------------------ interaction state ------------------
 
@@ -338,6 +349,8 @@
         resize();
         touchInteraction();
         syncJuliaCanvasSize();
+        // After resize, re-render Julia at new size.
+        requestJuliaRender();
     });
 
     function markInteraction() {
@@ -552,13 +565,79 @@
         updateJuliaFromCursor();
     }
 
+    // ---- Julia GPU worker integration ----
+
+    function requestJuliaRender() {
+        if (!juliaWorkerReady) return;
+        if (!juliaCanvas) return;
+        if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
+
+        const fbW = juliaCanvas.width | 0;
+        const fbH = juliaCanvas.height | 0;
+        if (!fbW || !fbH) return;
+
+        const jobId = juliaNextJobId++;
+        juliaCurrentJobId = jobId;
+
+        juliaWorker.postMessage({
+            type: "render",
+            jobId,
+            fbW,
+            fbH,
+            cRe: juliaCursorWorldX,
+            cIm: juliaCursorWorldY,
+        });
+    }
+
+    function handleJuliaFrame(msg) {
+        const { jobId, fbW, fbH, pixels } = msg;
+        if (juliaCurrentJobId === null || jobId !== juliaCurrentJobId) return;
+        if (!juliaCanvas) return;
+
+        const jctx = juliaCanvas.getContext("2d");
+        if (!jctx) return;
+
+        const data = new Uint8ClampedArray(pixels);
+        const img = new ImageData(data, fbW, fbH);
+        jctx.putImageData(img, 0, 0);
+    }
+
+    function initJuliaWorker() {
+        if (!juliaCanvas) return;
+
+        juliaWorker = new Worker("/mandelbrot/julia-worker.js");
+        juliaWorker.onmessage = (e) => {
+            const msg = e.data;
+            switch (msg.type) {
+                case "ready":
+                    juliaWorkerReady = true;
+                    // optional: trigger first render once cursor is set
+                    requestJuliaRender();
+                    break;
+                case "frame":
+                    handleJuliaFrame(msg);
+                    break;
+                case "error":
+                    setErrorStatus(msg.message || "julia worker error");
+                    break;
+            }
+        };
+        juliaWorker.onerror = (err) => {
+            setErrorStatus(err.message || "julia worker error");
+        };
+        juliaWorker.onmessageerror = () => {
+            setErrorStatus("julia worker message error");
+        };
+    }
+
     function updateJuliaFromCursor() {
         if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
         if (!juliaCanvas) return;
 
         setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY);
 
-        // hook up Julia rendering here if you want
+        // trigger Julia GPU worker render
+        requestJuliaRender();
     }
 
     function setupJuliaCursorDrag() {
@@ -737,14 +816,20 @@
 
     if (fc) {
         fc.addEventListener("input", () => {
-            updatePaletteBorderColor();
+            // If you have a specific palette-border updater, call it here.
+            // Keep generic color update:
+            updateColorChangers();
             recolorFromLastGray();
+            // You might also want Julia worker to respond to palette changes
+            requestJuliaRender();
         });
     }
 
     if (bw) {
         bw.addEventListener("input", () => {
             recolorFromLastGray();
+            // optional: Julia worker could depend on band width too
+            requestJuliaRender();
         });
     }
 
@@ -761,10 +846,11 @@
             stagePending = false;
 
             requestFullRender();
+            requestJuliaRender();
         });
     }
 
-    // ------------------ worker ------------------
+    // ------------------ worker: Mandelbrot ------------------
 
     function startWorkerJob(stageIndex) {
         if (!workerReady) return;
@@ -952,7 +1038,6 @@
             if (e.button !== 0) return;
 
             // Don't start a drag if the pointer is on a minimize button
-            // (or any element inside it).
             if (e.target.closest(".appMinimize")) {
                 return;
             }
@@ -985,7 +1070,6 @@
         headerEl.addEventListener("pointerup", endDrag);
         headerEl.addEventListener("pointercancel", endDrag);
     }
-
 
     function setupResizablePanel(boxEl, handleEl, minWidth, minHeight, onResize) {
         if (!boxEl || !handleEl) return;
@@ -1046,7 +1130,9 @@
 
         if (statusPaletteBtn) {
             statusPaletteBtn.classList.toggle("colorChanger", minimized);
-            statusPaletteBtn.style.color = minimized ? fc.value : statusEl.style.color;
+            statusPaletteBtn.style.color = minimized
+                ? fc.value
+                : statusEl.style.color;
         }
     }
 
@@ -1058,7 +1144,9 @@
 
         if (statusJuliaBtn) {
             statusJuliaBtn.classList.toggle("colorChanger", minimized);
-            statusJuliaBtn.style.color = minimized ? fc.value : statusEl.style.color;
+            statusJuliaBtn.style.color = minimized
+                ? fc.value
+                : statusEl.style.color;
         }
 
         if (juliaCursorEl) {
@@ -1066,7 +1154,10 @@
         }
 
         if (!minimized) {
-            requestAnimationFrame(syncJuliaCanvasSize);
+            requestAnimationFrame(() => {
+                syncJuliaCanvasSize();
+                requestJuliaRender();
+            });
         }
     }
 
@@ -1160,14 +1251,17 @@
             juliaResizeHandle,
             180,
             120,
-            syncJuliaCanvasSize,
+            () => {
+                syncJuliaCanvasSize();
+                requestJuliaRender();
+            },
         );
 
         requestAnimationFrame(() => {
             if (juliaBox.classList.contains("minimized")) return;
             const jctx = juliaCanvas.getContext("2d");
             if (jctx) {
-                jctx.fillStyle = "#ffffff";
+                jctx.fillStyle = "black";
                 jctx.fillRect(0, 0, juliaCanvas.width, juliaCanvas.height);
             }
         });
@@ -1212,6 +1306,7 @@
         setZoomStatus();
         updateStatus();
         initWorker();
+        initJuliaWorker();
 
         setupDraggablePanel(controls, controlsHeader);
         setupDraggablePanel(juliaBox, juliaHeader);
