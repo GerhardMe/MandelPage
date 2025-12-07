@@ -149,6 +149,16 @@
     let juliaNextJobId = 1;
     let juliaCurrentJobId = null;
 
+    // multi-stage preview (low-res first, then full-res)
+    const JULIA_STAGES = [4, 1]; // scale factors: 4x coarse, then full-res
+    let juliaStageIndex = -1;
+
+    // single in-flight job + at most one pending job
+    let juliaJobInFlight = false;
+    let juliaPendingRequest = null;   // latest requested params while a job is running
+    let juliaActiveParams = null;     // params for the currently running job
+
+
     // ------------------ interaction state ------------------
 
     let interactionActive = false;
@@ -187,13 +197,38 @@
     let juliaCursorWorldY = null;
     let juliaCursorDragging = false;
 
-    const JULIA_CURSOR_START_RE = -0.5125;
-    const JULIA_CURSOR_START_IM = -0.5213;
+    const JULIA_CURSOR_START_RE = -0.5125324324513248126471961823490;
+    const JULIA_CURSOR_START_IM = -0.5213923730185231986589371987689;
     const HAS_JULIA_START =
         Number.isFinite(JULIA_CURSOR_START_RE) &&
         Number.isFinite(JULIA_CURSOR_START_IM);
 
     // ------------------ helpers ------------------
+
+    function buildJuliaParams() {
+        if (!juliaCanvas) return null;
+        if (juliaCursorWorldX == null || juliaCursorWorldY == null) return null;
+
+        const outW = juliaCanvas.width | 0;
+        const outH = juliaCanvas.height | 0;
+        if (!outW || !outH) return null;
+
+        const raw = bw ? (parseInt(bw.value, 10) || 0) : 0;
+        const fillSnap = fillInside && fillInside.checked ? 1 : 0;
+        const colorHex = fc && fc.value ? fc.value : "#00ffff";
+        const color = hexToRgb(colorHex);
+
+        return {
+            outW,
+            outH,
+            cRe: juliaCursorWorldX,
+            cIm: juliaCursorWorldY,
+            color,
+            raw,
+            fillInterior: fillSnap,
+        };
+    }
+
 
     function hexToRgb(hex) {
         let h = hex.replace("#", "");
@@ -569,49 +604,130 @@
 
     function requestJuliaRender() {
         if (!juliaWorkerReady) return;
-        if (!juliaCanvas) return;
-        if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
 
-        const fbW = juliaCanvas.width | 0;
-        const fbH = juliaCanvas.height | 0;
-        if (!fbW || !fbH) return;
+        const params = buildJuliaParams();
+        if (!params) return;
+
+        // Overwrite any previous pending request
+        juliaPendingRequest = params;
+
+        // If nothing is in flight, start immediately
+        if (!juliaJobInFlight) {
+            startJuliaJobFromPending();
+        }
+    }
+
+    function startJuliaJobFromPending() {
+        if (!juliaWorkerReady) return;
+        if (!juliaPendingRequest) return;
+        if (!juliaCanvas) return;
+
+        const params = juliaPendingRequest;
+        juliaPendingRequest = null;
 
         const jobId = juliaNextJobId++;
         juliaCurrentJobId = jobId;
+        juliaStageIndex = 0;
+        juliaJobInFlight = true;
+        juliaActiveParams = params;
+
+        sendJuliaStage(jobId, params);
+    }
+
+    function sendJuliaStage(jobId, params) {
+        if (!juliaWorkerReady) return;
+        if (!juliaCanvas) return;
+        if (!params) return;
+        if (juliaStageIndex < 0 || juliaStageIndex >= JULIA_STAGES.length) return;
+
+        const scale = JULIA_STAGES[juliaStageIndex];
+
+        const fbW = Math.max(1, Math.floor(params.outW / scale));
+        const fbH = Math.max(1, Math.floor(params.outH / scale));
 
         juliaWorker.postMessage({
             type: "render",
             jobId,
             fbW,
             fbH,
-            cRe: juliaCursorWorldX,
-            cIm: juliaCursorWorldY,
+            cRe: params.cRe,
+            cIm: params.cIm,
+            color: params.color,
+            raw: params.raw,
+            fillInterior: params.fillInterior,
+            scale,
         });
     }
 
     function handleJuliaFrame(msg) {
-        const { jobId, fbW, fbH, pixels } = msg;
+        const { jobId, fbW, fbH, pixels, scale } = msg;
         if (juliaCurrentJobId === null || jobId !== juliaCurrentJobId) return;
         if (!juliaCanvas) return;
 
         const jctx = juliaCanvas.getContext("2d");
         if (!jctx) return;
 
+        const stageW = fbW | 0;
+        const stageH = fbH | 0;
+        if (!stageW || !stageH) return;
+
         const data = new Uint8ClampedArray(pixels);
-        const img = new ImageData(data, fbW, fbH);
-        jctx.putImageData(img, 0, 0);
+        const img = new ImageData(data, stageW, stageH);
+
+        const tmp = document.createElement("canvas");
+        tmp.width = stageW;
+        tmp.height = stageH;
+        const tctx = tmp.getContext("2d");
+        tctx.putImageData(img, 0, 0);
+
+        const outW = juliaCanvas.width;
+        const outH = juliaCanvas.height;
+        jctx.clearRect(0, 0, outW, outH);
+        jctx.drawImage(tmp, 0, 0, stageW, stageH, 0, 0, outW, outH);
+
+        const havePending = !!juliaPendingRequest;
+        const lastStageIndex = JULIA_STAGES.length - 1;
+
+        // If there is a newer request waiting, do NOT render finer stages for this job.
+        if (havePending) {
+            juliaJobInFlight = false;
+            juliaStageIndex = -1;
+            startJuliaJobFromPending();
+            return;
+        }
+
+        // No pending request -> continue with stages or finish
+        if (juliaStageIndex >= 0 && juliaStageIndex < lastStageIndex) {
+            juliaStageIndex++;
+            sendJuliaStage(jobId, juliaActiveParams);
+        } else {
+            juliaJobInFlight = false;
+            juliaStageIndex = -1;
+            juliaActiveParams = null;
+
+            if (juliaPendingRequest) {
+                startJuliaJobFromPending();
+            }
+        }
     }
 
     function initJuliaWorker() {
         if (!juliaCanvas) return;
 
         juliaWorker = new Worker("/mandelbrot/julia-worker.js");
+        juliaWorkerReady = false;
+        juliaJobInFlight = false;
+        juliaPendingRequest = null;
+        juliaActiveParams = null;
+        juliaStageIndex = -1;
+        juliaCurrentJobId = null;
+
         juliaWorker.onmessage = (e) => {
             const msg = e.data;
             switch (msg.type) {
                 case "ready":
                     juliaWorkerReady = true;
-                    // optional: trigger first render once cursor is set
+                    // Kick off an initial render once ready
                     requestJuliaRender();
                     break;
                 case "frame":
