@@ -1,19 +1,29 @@
 (function () {
+    "use strict";
+
     // ------------------ DOM refs ------------------
 
     const canvas = document.getElementById("view");
     const ctx = canvas.getContext("2d");
 
+    // Palette / controls
     const controls = document.getElementById("controls");
     const controlsHeader = document.getElementById("controlsHeader");
-
     const fc = document.getElementById("fc");
     const bw = document.getElementById("bw");
-    const statusEl = document.getElementById("status");
     const fillInside = document.getElementById("fillInside");
+    const statusEl = document.getElementById("status");
     const link = document.getElementById("gerhardLink");
 
-    fc.value = "#00ffff";
+    // Julia panel
+    const juliaBox = document.getElementById("juliaBox");
+    const juliaHeader = document.getElementById("juliaHeader");
+    const juliaToggle = document.getElementById("juliaToggle");
+    const juliaContent = document.getElementById("juliaContent");
+    const juliaCanvas = document.getElementById("juliaCanvas");
+    const juliaResizeHandle = document.getElementById("juliaResizeHandle");
+
+    if (fc) fc.value = "#00ffff";
 
     // ------------------ status ------------------
 
@@ -68,7 +78,7 @@
     let centerY = 0.0;
     let zoom = 1.0;
 
-    let fillInterior = fillInside.checked ? 1 : 0;
+    let fillInterior = fillInside && fillInside.checked ? 1 : 0;
 
     let fullW = 0;
     let fullH = 0;
@@ -118,18 +128,13 @@
 
     // pan
     let isPanning = false;
+    const activePointers = new Map();
     let panStartX = 0;
     let panStartY = 0;
     let panStartOffsetX = 0;
     let panStartOffsetY = 0;
 
-    // controls drag
-    let draggingControls = false;
-    let dragOffsetX = 0;
-    let dragOffsetY = 0;
-
     // pinch-zoom
-    const activePointers = new Map();
     let isPinching = false;
     let pinchStartDist = 0;
     let pinchStartScale = 1;
@@ -238,10 +243,8 @@
         const base = worldParamsFor(centerX, centerY, zoom);
         const s = viewScale || 1;
 
-        const uNorm =
-            (worldX - base.worldX0) / (base.worldWidth || 1e-9);
-        const vNorm =
-            (worldY - base.worldY0) / (base.worldHeight || 1e-9);
+        const uNorm = (worldX - base.worldX0) / (base.worldWidth || 1e-9);
+        const vNorm = (worldY - base.worldY0) / (base.worldHeight || 1e-9);
         const baseX = uNorm * fullW;
         const baseY = vNorm * fullH;
 
@@ -274,6 +277,7 @@
     window.addEventListener("resize", () => {
         resize();
         touchInteraction();
+        syncJuliaCanvasSize();
     });
 
     function markInteraction() {
@@ -310,7 +314,7 @@
         const isLowBlur = raw <= 50;
         const isHighBlur = raw > 50;
 
-        // ----- low-blur (0..50): original exponent → smoothly morphs to linear at 50 -----
+        // low-blur (0..50): exponent curve blended to linear
         let lowExp = null;
         let lowToLinear = 0;
         if (isLowBlur) {
@@ -319,21 +323,15 @@
             const minExp = 0.25;
             const maxExp = 3.0;
             lowExp = minExp + (1 - tOrig) * (maxExp - minExp);
-
-            // 0 -> pure original curve, 50 -> pure linear
             lowToLinear = clamped / 50;   // 0..1
         }
 
-        // ----- high-blur (50..100): burn band → smoothly morphs to linear at 50 -----
+        // high-blur (50..100): burn band blended to linear
         let bandWidth = null;
         let highToLinear = 0;
         if (isHighBlur) {
             const u = (raw - 50) / 50; // 0..1 for 50→100
-            // 50 -> bandWidth ~1 (thin bright band)
-            // 100 -> bandWidth ~0.2 (wide burn)
-            bandWidth = 1 - 0.8 * u;  // 1 → 0.2
-
-            // 50 -> pure linear, 100 -> pure burn
+            bandWidth = 1 - 0.8 * u;   // 1 → 0.2
             highToLinear = (100 - raw) / 50; // 1..0
         }
 
@@ -350,23 +348,15 @@
                 const isFilledInterior = fillInterior && v === 255;
 
                 if (isFilledInterior) {
-                    // always fully saturated for inside-set white pixels
+                    // fully saturated inside-set pixels
                     wVal = 1;
                 } else if (isLowBlur) {
-                    // your original exponent curve
                     let base = Math.pow(gNorm, lowExp);
                     if (base < 0) base = 0;
                     if (base > 1) base = 1;
-
-                    // blend toward linear as bw → 50
-                    // lowToLinear = 0 at bw=0, 1 at bw=50
                     wVal = base * (1 - lowToLinear) + gNorm * lowToLinear;
                 } else {
-                    // isHighBlur: burn band near the set
                     let burn = gNorm >= bandWidth ? 1 : gNorm / bandWidth;
-
-                    // blend toward linear as bw → 50
-                    // highToLinear = 1 at bw=50, 0 at bw=100
                     wVal = burn * (1 - highToLinear) + gNorm * highToLinear;
                 }
 
@@ -413,9 +403,21 @@
         redrawFromBase();
     }
 
+    // ---------- generic color changer for UI elements ----------
+
+    function updateColorChangers() {
+        if (!fc) return;
+        const color = fc.value;
+        const nodes = document.querySelectorAll(".colorChanger");
+
+        nodes.forEach((el) => {
+            el.style.borderColor = color;
+            el.style.color = color;
+        });
+    }
+
     function updatePaletteBorderColor() {
-        controls.style.borderColor = fc.value;
-        link.style.color = fc.value;
+        updateColorChangers();
     }
 
     // ------------------ bake zoom/pan into base + reset view ------------------
@@ -608,28 +610,34 @@
 
     // ------------------ palette controls ------------------
 
-    fc.addEventListener("input", () => {
-        updatePaletteBorderColor();
-        recolorFromLastGray();
-    });
+    if (fc) {
+        fc.addEventListener("input", () => {
+            updatePaletteBorderColor();
+            recolorFromLastGray();
+        });
+    }
 
-    bw.addEventListener("input", () => {
-        recolorFromLastGray();
-    });
+    if (bw) {
+        bw.addEventListener("input", () => {
+            recolorFromLastGray();
+        });
+    }
 
-    fillInside.addEventListener("change", () => {
-        fillInterior = fillInside.checked ? 1 : 0;
+    if (fillInside) {
+        fillInside.addEventListener("change", () => {
+            fillInterior = fillInside.checked ? 1 : 0;
 
-        if (workerReady && currentJobId != null) {
-            worker.postMessage({ type: "cancel", jobId: currentJobId });
-        }
-        currentJobId = null;
-        jobInFlight = false;
-        currentStage = -1;
-        stagePending = false;
+            if (workerReady && currentJobId != null) {
+                worker.postMessage({ type: "cancel", jobId: currentJobId });
+            }
+            currentJobId = null;
+            jobInFlight = false;
+            currentStage = -1;
+            stagePending = false;
 
-        requestFullRender();
-    });
+            requestFullRender();
+        });
+    }
 
     // ------------------ worker ------------------
 
@@ -750,7 +758,7 @@
 
         redrawFullColored(lastGray, fbW, fbH);
 
-        // fold view into base world (as before)
+        // fold view into base world
         centerX = view.cx;
         centerY = view.cy;
         zoom = view.zoom;
@@ -807,35 +815,154 @@
         };
     }
 
-    // ------------------ controls drag ------------------
+    // ------------------ generic draggable / resizable panels ------------------
 
-    controlsHeader.addEventListener("pointerdown", (e) => {
-        if (e.button !== 0) return;
-        draggingControls = true;
-        controlsHeader.setPointerCapture(e.pointerId);
-        const rect = controls.getBoundingClientRect();
-        dragOffsetX = e.clientX - rect.left;
-        dragOffsetY = e.clientY - rect.top;
-    });
+    function setupDraggablePanel(panelEl, headerEl) {
+        if (!panelEl || !headerEl) return;
 
-    function endControlsDrag(e) {
-        if (!draggingControls) return;
-        draggingControls = false;
-        try {
-            controlsHeader.releasePointerCapture(e.pointerId);
-        } catch (_) { }
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        headerEl.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            dragging = true;
+            headerEl.setPointerCapture(e.pointerId);
+            const rect = panelEl.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+        });
+
+        function endDrag(e) {
+            if (!dragging) return;
+            dragging = false;
+            try {
+                headerEl.releasePointerCapture(e.pointerId);
+            } catch (_) { }
+        }
+
+        window.addEventListener("pointermove", (e) => {
+            if (!dragging) return;
+            const x = e.clientX - offsetX;
+            const y = e.clientY - offsetY;
+            panelEl.style.left = x + "px";
+            panelEl.style.top = y + "px";
+            panelEl.style.right = "auto";
+            panelEl.style.bottom = "auto";
+        });
+
+        headerEl.addEventListener("pointerup", endDrag);
+        headerEl.addEventListener("pointercancel", endDrag);
     }
 
-    window.addEventListener("pointermove", (e) => {
-        if (!draggingControls) return;
-        const x = e.clientX - dragOffsetX;
-        const y = e.clientY - dragOffsetY;
-        controls.style.left = x + "px";
-        controls.style.top = y + "px";
-    });
+    function setupResizablePanel(boxEl, handleEl, minWidth, minHeight, onResize) {
+        if (!boxEl || !handleEl) return;
 
-    controlsHeader.addEventListener("pointerup", endControlsDrag);
-    controlsHeader.addEventListener("pointercancel", endControlsDrag);
+        let resizing = false;
+        let startX = 0;
+        let startY = 0;
+        let startWidth = 0;
+        let startHeight = 0;
+
+        handleEl.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            resizing = true;
+            handleEl.setPointerCapture(e.pointerId);
+            const rect = boxEl.getBoundingClientRect();
+            startWidth = rect.width;
+            startHeight = rect.height;
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        function endResize(e) {
+            if (!resizing) return;
+            resizing = false;
+            try {
+                handleEl.releasePointerCapture(e.pointerId);
+            } catch (_) { }
+        }
+
+        window.addEventListener("pointermove", (e) => {
+            if (!resizing) return;
+
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            const newWidth = Math.max(minWidth, startWidth + dx);
+            const newHeight = Math.max(minHeight, startHeight + dy);
+
+            boxEl.style.width = newWidth + "px";
+            boxEl.style.height = newHeight + "px";
+
+            if (typeof onResize === "function") {
+                onResize();
+            }
+        });
+
+        handleEl.addEventListener("pointerup", endResize);
+        handleEl.addEventListener("pointercancel", endResize);
+    }
+
+    // ------------------ Julia panel ------------------
+
+    function syncJuliaCanvasSize() {
+        if (!juliaCanvas || !juliaContent || !juliaBox || !juliaHeader) return;
+
+        const boxRect = juliaBox.getBoundingClientRect();
+        const boxStyle = getComputedStyle(juliaBox);
+
+        const width = Math.max(1, Math.floor(boxRect.width) - 24);
+        const height = Math.max(
+            1,
+            Math.floor(boxRect.height - 46),
+        );
+
+        juliaContent.style.width = width + "px";
+        juliaContent.style.height = height + "px";
+
+        juliaCanvas.style.width = width + "px";
+        juliaCanvas.style.height = height + "px";
+
+        juliaCanvas.width = width;
+        juliaCanvas.height = height;
+    }
+
+    function setupJuliaPanel() {
+        if (!juliaBox || !juliaHeader || !juliaCanvas || !juliaContent) return;
+
+        setupDraggablePanel(juliaBox, juliaHeader);
+
+        // Minimize toggle
+        if (juliaToggle) {
+            juliaToggle.addEventListener("click", () => {
+                const minimized = juliaBox.classList.toggle("minimized");
+                juliaToggle.textContent = minimized ? "+" : "−";
+                if (!minimized) {
+                    requestAnimationFrame(syncJuliaCanvasSize);
+                }
+            });
+        }
+
+        // Resize behavior
+        setupResizablePanel(
+            juliaBox,
+            juliaResizeHandle,
+            180,
+            120,
+            syncJuliaCanvasSize,
+        );
+
+        // Initial size / placeholder
+        requestAnimationFrame(() => {
+            syncJuliaCanvasSize();
+            const jctx = juliaCanvas.getContext("2d");
+            if (jctx) {
+                jctx.fillStyle = "#ffffff";
+                jctx.fillRect(0, 0, juliaCanvas.width, juliaCanvas.height);
+            }
+        });
+    }
 
     // ------------------ main loop ------------------
 
@@ -875,6 +1002,13 @@
         setZoomStatus();
         updateStatus();
         initWorker();
+
+        // Palette panel drag
+        setupDraggablePanel(controls, controlsHeader);
+
+        // Julia UI
+        setupJuliaPanel();
+
         loop();
     }
 

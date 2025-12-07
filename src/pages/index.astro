@@ -9,8 +9,8 @@
             <div id="canvasWrapper">
                 <canvas id="view"></canvas>
 
-                <div id="controls">
-                    <div id="controlsHeader">Palette</div>
+                <div id="controls" class="colorChanger">
+                    <div class="appHeader" id="controlsHeader">Palette</div>
                     <div class="controls-row">
                         <label>
                             Color
@@ -36,11 +36,22 @@
                 </div>
             </div>
 
+            <!-- NEW: draggable, minimizable Julia canvas box -->
+            <div id="juliaBox" class="colorChanger">
+                <div class="appHeader" id="juliaHeader">Julia set</div>
+                <div id="juliaContent">
+                    <canvas id="juliaCanvas"></canvas>
+                </div>
+                <div id="juliaResizeHandle"></div>
+            </div>
+
             <div id="statusBar">
                 <div id="status">JS must be enabled for this site</div>
                 <div id="about">
-                    <a id="gerhardLink" href="https://gerhard.page"
-                        >Built by Gerhard</a
+                    <a
+                        class="colorChanger"
+                        id="gerhardLink"
+                        href="https://gerhard.page">Built by Gerhard</a
                     >
                 </div>
             </div>
@@ -51,6 +62,10 @@
     </body>
 
     <style>
+        :root {
+            --app-margin: 16px; /* global scope */
+            --app-padding: 11px;
+        }
         html,
         body {
             margin: 0;
@@ -89,30 +104,32 @@
         /* Palette / controls box */
         #controls {
             position: fixed;
-            top: 16px;
-            left: 16px;
-            padding: 8px 10px;
+            top: var(--app-margin);
+            left: var(--app-margin);
+            padding: var(--app-padding);
             background: rgba(0, 0, 0, 0.75);
             border-radius: 2px;
             border: 1px solid;
             font-size: 12px;
             z-index: 10;
             user-select: none;
+            color: white !important;
+            min-width: 20em;
         }
 
-        #controlsHeader {
+        .appHeader {
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.03em;
-            margin-bottom: 6px;
-            width: 20em;
             cursor: grab;
             margin: -1em -1em -1em -1em;
             padding: 1em 1em 1em 1em;
             height: 2.5em;
+
+            color: white !important;
         }
 
-        #controlsHeader:active {
+        .appHeader:active {
             cursor: grabbing;
         }
 
@@ -170,7 +187,6 @@
         }
 
         #gerhardLink {
-            color: #00ffff;
             cursor: pointer;
             text-decoration: none;
         }
@@ -183,6 +199,61 @@
             flex: 1 1 auto;
             overflow: hidden;
             text-overflow: ellipsis;
+        }
+        /* Julia box – visually like palette, but right side */
+        #juliaBox {
+            position: fixed;
+            top: var(--app-margin);
+            right: var(--app-margin);
+            padding: var(--app-padding);
+            background: rgba(0, 0, 0, 0.75); /* see-through box */
+            border-radius: 2px;
+            border: 1px solid;
+            font-size: 12px;
+            z-index: 11;
+            user-select: none;
+            width: 530px;
+            height: 410px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Content wraps the white canvas + resize handle */
+        #juliaContent {
+            position: relative;
+            flex: 1 1 auto;
+            margin-top: 6px;
+        }
+
+        /* Opaque white canvas inside transparent box */
+        #juliaCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background: #ffffff;
+        }
+
+        /* Resize handle (bottom-right corner) */
+        #juliaResizeHandle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            right: 3px;
+            bottom: 3px;
+            cursor: se-resize;
+            box-sizing: border-box;
+            border-right: 1px solid;
+            border-bottom: 1px solid;
+        }
+
+        /* Minimized Julia: only header visible */
+        #juliaBox.minimized {
+            height: auto;
+        }
+
+        #juliaBox.minimized #juliaContent {
+            display: none;
         }
 
         /* Neutralise any mobile/hi-DPI scaling from the Layout on this page */
