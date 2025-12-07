@@ -1,0 +1,882 @@
+(function () {
+    // ------------------ DOM refs ------------------
+
+    const canvas = document.getElementById("view");
+    const ctx = canvas.getContext("2d");
+
+    const controls = document.getElementById("controls");
+    const controlsHeader = document.getElementById("controlsHeader");
+
+    const fc = document.getElementById("fc");
+    const bw = document.getElementById("bw");
+    const statusEl = document.getElementById("status");
+    const fillInside = document.getElementById("fillInside");
+    const link = document.getElementById("gerhardLink");
+
+    fc.value = "#00ffff";
+
+    // ------------------ status ------------------
+
+    const status = {
+        render: "WASM worker loading…",
+        cursor: "",
+        zoom: "",
+        error: "",
+    };
+
+    function updateStatus() {
+        const parts = [];
+        if (status.render) parts.push(status.render);
+        if (status.zoom) parts.push(status.zoom);
+        if (status.error) parts.push(status.error);
+        if (status.cursor) parts.push(status.cursor);
+        statusEl.textContent = parts.join(" | ");
+    }
+
+    function setRenderStatus(msg) {
+        status.render = msg;
+        updateStatus();
+    }
+
+    function setZoomStatus() {
+        const effectiveZoom = zoom * (viewScale || 1);
+        status.zoom = `zoom: ${effectiveZoom.toFixed(3)}x`;
+        updateStatus();
+    }
+
+    function setCursorStatus(cx, cy) {
+        if (cx == null || cy == null) {
+            status.cursor = "";
+            updateStatus();
+            return;
+        }
+        const re = cx.toFixed(6);
+        const imAbs = Math.abs(cy).toFixed(6);
+        const sign = cy >= 0 ? "+" : "-";
+        status.cursor = `cursor: ${re} ${sign} ${imAbs}i`;
+        updateStatus();
+    }
+
+    function setErrorStatus(msg) {
+        status.error = msg ? `error: ${msg}` : "";
+        updateStatus();
+    }
+
+    // ------------------ world / framebuffer ------------------
+
+    let centerX = -0.75;
+    let centerY = 0.0;
+    let zoom = 1.0;
+
+    let fillInterior = fillInside.checked ? 1 : 0;
+
+    let fullW = 0;
+    let fullH = 0;
+
+    const baseCanvas = document.createElement("canvas");
+    const baseCtx = baseCanvas.getContext("2d");
+    let baseValid = false;
+
+    const bufCanvas = document.createElement("canvas");
+    const bufCtx = bufCanvas.getContext("2d");
+
+    let lastGray = null;
+    let lastFbW = 0;
+    let lastFbH = 0;
+
+    // screen transform (pan/zoom of base image)
+    let viewScale = 1;
+    let viewOffsetX = 0;
+    let viewOffsetY = 0;
+
+    // ------------------ worker state ------------------
+
+    let worker = null;
+    let workerReady = false;
+    let nextJobId = 1;
+    let currentJobId = null;
+    let jobInFlight = false;
+
+    const STAGES = [
+        { scale: 4 },
+        { scale: 1 },
+        { scale: 0.25 },
+    ];
+    let currentStage = -1;
+    let stagePending = false;
+
+    // ------------------ interaction state ------------------
+
+    let interactionActive = false;
+    let lastInteractionTime = 0;
+    const INTERACTION_SETTLE_MS = 50;
+
+    function touchInteraction() {
+        interactionActive = true;
+        lastInteractionTime = performance.now();
+    }
+
+    // pan
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartY = 0;
+    let panStartOffsetX = 0;
+    let panStartOffsetY = 0;
+
+    // controls drag
+    let draggingControls = false;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    // pinch-zoom
+    const activePointers = new Map();
+    let isPinching = false;
+    let pinchStartDist = 0;
+    let pinchStartScale = 1;
+    let pinchAnchorScreenX = 0;
+    let pinchAnchorScreenY = 0;
+    let pinchAnchorWorldX = 0;
+    let pinchAnchorWorldY = 0;
+
+    // cursor
+    let cursorScreenX = null;
+    let cursorScreenY = null;
+
+    // ------------------ helpers ------------------
+
+    function hexToRgb(hex) {
+        let h = hex.replace("#", "");
+        if (h.length === 3) {
+            h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        }
+        const num = parseInt(h, 16);
+        return {
+            r: (num >> 16) & 255,
+            g: (num >> 8) & 255,
+            b: num & 255,
+        };
+    }
+
+    function getBandWidth() {
+        const raw = parseInt(bw.value, 10) || 0;
+        const sNorm = Math.min(1, Math.max(0, raw / 100));
+        const sInv = 1 - sNorm;
+        const minW = 0.2;
+        const maxW = 5;
+        return minW + sInv * (maxW - minW);
+    }
+
+    function worldParamsFor(cX, cY, z) {
+        if (!fullW || !fullH) {
+            return {
+                worldWidth: 0,
+                worldHeight: 0,
+                worldX0: cX,
+                worldY0: cY,
+            };
+        }
+
+        const zSafe = z > 0 ? z : 1;
+        const minDim = Math.min(fullW, fullH);
+        const basePixelSize = 4.0 / minDim;
+        const pixelSize = basePixelSize / zSafe;
+
+        const worldWidth = pixelSize * fullW;
+        const worldHeight = pixelSize * fullH;
+
+        const worldX0 = cX - worldWidth / 2;
+        const worldY0 = cY - worldHeight / 2;
+
+        return { worldWidth, worldHeight, worldX0, worldY0 };
+    }
+
+    function screenToWorld(sx, sy) {
+        const { worldWidth, worldHeight, worldX0, worldY0 } = worldParamsFor(
+            centerX,
+            centerY,
+            zoom,
+        );
+        if (!fullW || !fullH || !worldWidth || !worldHeight) {
+            return { cx: centerX, cy: centerY };
+        }
+
+        const s = viewScale || 1;
+        const baseX = (sx - viewOffsetX) / s;
+        const baseY = (sy - viewOffsetY) / s;
+
+        const u = baseX / fullW;
+        const v = baseY / fullH;
+
+        const cx = worldX0 + u * worldWidth;
+        const cy = worldY0 + v * worldHeight;
+        return { cx, cy };
+    }
+
+    function getCurrentView() {
+        const effectiveZoom = zoom * (viewScale || 1);
+        const baseParams = worldParamsFor(centerX, centerY, zoom);
+        const { worldWidth, worldHeight, worldX0, worldY0 } = baseParams;
+
+        if (!fullW || !fullH || !worldWidth || !worldHeight) {
+            return { cx: centerX, cy: centerY, zoom: effectiveZoom };
+        }
+
+        const s = viewScale || 1;
+        const baseXCenter = (fullW / 2 - viewOffsetX) / s;
+        const baseYCenter = (fullH / 2 - viewOffsetY) / s;
+
+        const u = baseXCenter / fullW;
+        const v = baseYCenter / fullH;
+
+        const cx = worldX0 + u * worldWidth;
+        const cy = worldY0 + v * worldHeight;
+
+        return { cx, cy, zoom: effectiveZoom };
+    }
+
+    function lockWorldPointToScreen(worldX, worldY, sx, sy) {
+        const base = worldParamsFor(centerX, centerY, zoom);
+        const s = viewScale || 1;
+
+        const uNorm =
+            (worldX - base.worldX0) / (base.worldWidth || 1e-9);
+        const vNorm =
+            (worldY - base.worldY0) / (base.worldHeight || 1e-9);
+        const baseX = uNorm * fullW;
+        const baseY = vNorm * fullH;
+
+        viewOffsetX = sx - s * baseX;
+        viewOffsetY = sy - s * baseY;
+    }
+
+    function resize() {
+        const rect = canvas.getBoundingClientRect();
+        const newW = Math.max(1, Math.floor(rect.width));
+        const newH = Math.max(1, Math.floor(rect.height));
+
+        canvas.width = newW;
+        canvas.height = newH;
+
+        fullW = newW;
+        fullH = newH;
+
+        baseCanvas.width = fullW;
+        baseCanvas.height = fullH;
+        baseValid = false;
+
+        lastGray = null;
+
+        if (workerReady) {
+            requestFullRender();
+        }
+    }
+
+    window.addEventListener("resize", () => {
+        resize();
+        touchInteraction();
+    });
+
+    function markInteraction() {
+        interactionActive = true;
+        lastInteractionTime = performance.now();
+
+        stagePending = false;
+        currentStage = -1;
+
+        if (workerReady && currentJobId != null) {
+            worker.postMessage({ type: "cancel", jobId: currentJobId });
+        }
+        currentJobId = null;
+        jobInFlight = false;
+    }
+
+    function requestFullRender() {
+        if (!workerReady) return;
+        currentStage = 0;
+        stagePending = true;
+        setErrorStatus("");
+    }
+
+    // ------------------ drawing helpers ------------------
+
+    function colorizeGray(gray) {
+        const N = gray.length;
+        const out = new Uint8ClampedArray(N * 4);
+
+        const color = hexToRgb(fc.value);
+        const rawFull = parseInt(bw.value, 10) || 0;
+        const raw = Math.max(0, Math.min(100, rawFull)); // 0..100
+
+        const isLowBlur = raw <= 50;
+        const isHighBlur = raw > 50;
+
+        // ----- low-blur (0..50): original exponent → smoothly morphs to linear at 50 -----
+        let lowExp = null;
+        let lowToLinear = 0;
+        if (isLowBlur) {
+            const clamped = raw;          // 0..50
+            const tOrig = clamped / 100;
+            const minExp = 0.25;
+            const maxExp = 3.0;
+            lowExp = minExp + (1 - tOrig) * (maxExp - minExp);
+
+            // 0 -> pure original curve, 50 -> pure linear
+            lowToLinear = clamped / 50;   // 0..1
+        }
+
+        // ----- high-blur (50..100): burn band → smoothly morphs to linear at 50 -----
+        let bandWidth = null;
+        let highToLinear = 0;
+        if (isHighBlur) {
+            const u = (raw - 50) / 50; // 0..1 for 50→100
+            // 50 -> bandWidth ~1 (thin bright band)
+            // 100 -> bandWidth ~0.2 (wide burn)
+            bandWidth = 1 - 0.8 * u;  // 1 → 0.2
+
+            // 50 -> pure linear, 100 -> pure burn
+            highToLinear = (100 - raw) / 50; // 1..0
+        }
+
+        let o = 0;
+        for (let i = 0; i < N; i++) {
+            const v = gray[i] | 0;
+            const gNorm = v / 255;
+            let r, g, b;
+
+            if (gNorm <= 0) {
+                r = g = b = 0;
+            } else {
+                let wVal;
+                const isFilledInterior = fillInterior && v === 255;
+
+                if (isFilledInterior) {
+                    // always fully saturated for inside-set white pixels
+                    wVal = 1;
+                } else if (isLowBlur) {
+                    // your original exponent curve
+                    let base = Math.pow(gNorm, lowExp);
+                    if (base < 0) base = 0;
+                    if (base > 1) base = 1;
+
+                    // blend toward linear as bw → 50
+                    // lowToLinear = 0 at bw=0, 1 at bw=50
+                    wVal = base * (1 - lowToLinear) + gNorm * lowToLinear;
+                } else {
+                    // isHighBlur: burn band near the set
+                    let burn = gNorm >= bandWidth ? 1 : gNorm / bandWidth;
+
+                    // blend toward linear as bw → 50
+                    // highToLinear = 1 at bw=50, 0 at bw=100
+                    wVal = burn * (1 - highToLinear) + gNorm * highToLinear;
+                }
+
+                r = color.r * wVal;
+                g = color.g * wVal;
+                b = color.b * wVal;
+            }
+
+            out[o++] = r;
+            out[o++] = g;
+            out[o++] = b;
+            out[o++] = 255;
+        }
+
+        return out;
+    }
+
+    function redrawFromBase() {
+        if (!baseValid) return;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, fullW, fullH);
+        ctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
+        ctx.drawImage(baseCanvas, 0, 0);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+
+    function redrawFullColored(gray, fbW, fbH) {
+        const colored = colorizeGray(gray);
+
+        bufCanvas.width = fbW;
+        bufCanvas.height = fbH;
+        const img = new ImageData(colored, fbW, fbH);
+        bufCtx.putImageData(img, 0, 0);
+
+        baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+        baseCtx.clearRect(0, 0, fullW, fullH);
+        baseCtx.drawImage(bufCanvas, 0, 0, fbW, fbH, 0, 0, fullW, fullH);
+        baseValid = true;
+    }
+
+    function recolorFromLastGray() {
+        if (!lastGray || lastFbW <= 0 || lastFbH <= 0) return;
+        redrawFullColored(lastGray, lastFbW, lastFbH);
+        redrawFromBase();
+    }
+
+    function updatePaletteBorderColor() {
+        controls.style.borderColor = fc.value;
+        link.style.color = fc.value;
+    }
+
+    // ------------------ bake zoom/pan into base + reset view ------------------
+
+    function bakeTransformIntoBase() {
+        if (!baseValid) return;
+        if (viewScale === 1 && viewOffsetX === 0 && viewOffsetY === 0) return;
+
+        const tmp = document.createElement("canvas");
+        tmp.width = fullW;
+        tmp.height = fullH;
+        const tctx = tmp.getContext("2d");
+
+        // apply current interactive transform to base into tmp
+        tctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
+        tctx.drawImage(baseCanvas, 0, 0);
+
+        // copy back to baseCanvas at identity
+        baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+        baseCtx.clearRect(0, 0, fullW, fullH);
+        baseCtx.drawImage(tmp, 0, 0);
+        baseValid = true;
+    }
+
+    function commitVisualAndReset() {
+        const view = getCurrentView(); // uses current viewScale/offset
+
+        // bake the zoomed/panned image into base as a quick preview
+        bakeTransformIntoBase();
+
+        // commit world view
+        centerX = view.cx;
+        centerY = view.cy;
+        zoom = view.zoom;
+
+        // reset interactive transform
+        viewScale = 1;
+        viewOffsetX = 0;
+        viewOffsetY = 0;
+        setZoomStatus();
+
+        redrawFromBase();
+    }
+
+    // ------------------ canvas pointer / touch ------------------
+
+    canvas.addEventListener("pointerdown", (e) => {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        cursorScreenX = sx;
+        cursorScreenY = sy;
+
+        if (activePointers.size === 2) {
+            isPinching = true;
+            isPanning = false;
+
+            const pts = Array.from(activePointers.values());
+            const dx = pts[0].x - pts[1].x;
+            const dy = pts[0].y - pts[1].y;
+            pinchStartDist = Math.hypot(dx, dy) || 1;
+            pinchStartScale = viewScale;
+
+            const sxMid = (pts[0].x + pts[1].x) / 2 - rect.left;
+            const syMid = (pts[0].y + pts[1].y) / 2 - rect.top;
+            pinchAnchorScreenX = sxMid;
+            pinchAnchorScreenY = syMid;
+
+            const world = screenToWorld(sxMid, syMid);
+            pinchAnchorWorldX = world.cx;
+            pinchAnchorWorldY = world.cy;
+
+            markInteraction();
+            return;
+        }
+
+        if (!isPinching && activePointers.size === 1) {
+            isPanning = true;
+            canvas.setPointerCapture(e.pointerId);
+            panStartX = e.clientX;
+            panStartY = e.clientY;
+            panStartOffsetX = viewOffsetX;
+            panStartOffsetY = viewOffsetY;
+            markInteraction();
+        }
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        cursorScreenX = sx;
+        cursorScreenY = sy;
+
+        if (!activePointers.has(e.pointerId)) return;
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        if (isPinching && activePointers.size === 2) {
+            const pts = Array.from(activePointers.values());
+            const dx = pts[0].x - pts[1].x;
+            const dy = pts[0].y - pts[1].y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const zoomFactor = dist / pinchStartDist;
+
+            viewScale = pinchStartScale * zoomFactor;
+
+            lockWorldPointToScreen(
+                pinchAnchorWorldX,
+                pinchAnchorWorldY,
+                pinchAnchorScreenX,
+                pinchAnchorScreenY,
+            );
+
+            setZoomStatus();
+            redrawFromBase();
+            touchInteraction();
+            return;
+        }
+
+        if (!isPanning || isPinching) return;
+
+        const dx = e.clientX - panStartX;
+        const dy = e.clientY - panStartY;
+
+        viewOffsetX = panStartOffsetX + dx;
+        viewOffsetY = panStartOffsetY + dy;
+
+        redrawFromBase();
+        touchInteraction();
+    });
+
+    canvas.addEventListener("pointerleave", () => {
+        cursorScreenX = null;
+        cursorScreenY = null;
+        setCursorStatus(null, null);
+    });
+
+    function endPan(e) {
+        if (activePointers.has(e.pointerId)) {
+            activePointers.delete(e.pointerId);
+        }
+
+        if (isPinching && activePointers.size < 2) {
+            isPinching = false;
+        }
+
+        if (!isPanning) {
+            touchInteraction();
+            return;
+        }
+
+        isPanning = false;
+        try {
+            canvas.releasePointerCapture(e.pointerId);
+        } catch (_) { }
+        touchInteraction();
+    }
+
+    canvas.addEventListener("pointerup", endPan);
+    canvas.addEventListener("pointercancel", endPan);
+
+    canvas.addEventListener(
+        "wheel",
+        (e) => {
+            e.preventDefault();
+
+            const rect = canvas.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+
+            cursorScreenX = sx;
+            cursorScreenY = sy;
+
+            const worldBefore = screenToWorld(sx, sy);
+
+            const delta = -e.deltaY;
+            const zoomFactor = Math.exp(delta * 0.001);
+            viewScale = (viewScale || 1) * zoomFactor;
+
+            lockWorldPointToScreen(worldBefore.cx, worldBefore.cy, sx, sy);
+
+            setZoomStatus();
+            redrawFromBase();
+            markInteraction();
+        },
+        { passive: false },
+    );
+
+    // ------------------ palette controls ------------------
+
+    fc.addEventListener("input", () => {
+        updatePaletteBorderColor();
+        recolorFromLastGray();
+    });
+
+    bw.addEventListener("input", () => {
+        recolorFromLastGray();
+    });
+
+    fillInside.addEventListener("change", () => {
+        fillInterior = fillInside.checked ? 1 : 0;
+
+        if (workerReady && currentJobId != null) {
+            worker.postMessage({ type: "cancel", jobId: currentJobId });
+        }
+        currentJobId = null;
+        jobInFlight = false;
+        currentStage = -1;
+        stagePending = false;
+
+        requestFullRender();
+    });
+
+    // ------------------ worker ------------------
+
+    function startWorkerJob(stageIndex) {
+        if (!workerReady) return;
+        const stage = STAGES[stageIndex];
+        const scale = stage.scale;
+
+        const fbW = fullW;
+        const fbH = fullH;
+        if (!fbW || !fbH) return;
+
+        const jobId = nextJobId++;
+        currentJobId = jobId;
+        jobInFlight = true;
+
+        const view = getCurrentView();
+        const fillSnap = fillInterior | 0;
+
+        worker.postMessage({
+            type: "render",
+            jobId,
+            fbW,
+            fbH,
+            cx: view.cx,
+            cy: view.cy,
+            zoom: view.zoom,
+            scale,
+            fillInterior: fillSnap,
+        });
+
+        setRenderStatus(
+            `render: stage ${stageIndex + 1}/${STAGES.length} scale=${scale}`,
+        );
+    }
+
+    function handleWorkerScan(msg) {
+        const { jobId, fbW, fbH, yStart, yEnd } = msg;
+        if (currentJobId === null || jobId !== currentJobId) return;
+
+        if (currentStage !== STAGES.length - 1) return;
+
+        const numRows = yEnd - yStart;
+        if (numRows <= 0) return;
+
+        const destY = (yStart / fbH) * fullH;
+        const destH = (numRows / fbH) * fullH;
+
+        baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+        baseCtx.fillStyle = fc.value;
+        baseCtx.fillRect(0, destY, fullW, destH);
+        baseValid = true;
+
+        redrawFromBase();
+    }
+
+    function handleWorkerPartial(msg) {
+        const { jobId, fbW, fbH, gray, yStart, yEnd } = msg;
+        if (currentJobId === null || jobId !== currentJobId) return;
+
+        const numRows = yEnd - yStart;
+        if (numRows <= 0) return;
+
+        if (!lastGray || lastFbW !== fbW || lastFbH !== fbH) {
+            lastGray = new Uint8Array(fbW * fbH);
+            lastFbW = fbW;
+            lastFbH = fbH;
+        }
+
+        for (let row = 0; row < numRows; row++) {
+            const srcBase = row * fbW;
+            const dstRow = yStart + row;
+            const dstBase = dstRow * fbW;
+            lastGray.set(gray.subarray(srcBase, srcBase + fbW), dstBase);
+        }
+
+        const coloredBand = colorizeGray(gray);
+
+        bufCanvas.width = fbW;
+        bufCanvas.height = numRows;
+        const img = new ImageData(coloredBand, fbW, numRows);
+        bufCtx.putImageData(img, 0, 0);
+
+        const destY = (yStart / fbH) * fullH;
+        const destH = (numRows / fbH) * fullH;
+
+        baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+        baseCtx.drawImage(
+            bufCanvas,
+            0,
+            0,
+            fbW,
+            numRows,
+            0,
+            destY,
+            fullW,
+            destH,
+        );
+        baseValid = true;
+
+        redrawFromBase();
+    }
+
+    function handleWorkerFrame(msg) {
+        const { jobId, fbW, fbH, gray } = msg;
+        if (currentJobId === null || jobId !== currentJobId) {
+            jobInFlight = false;
+            return;
+        }
+
+        jobInFlight = false;
+
+        const view = getCurrentView();
+
+        lastGray = new Uint8Array(gray);
+        lastFbW = fbW;
+        lastFbH = fbH;
+
+        redrawFullColored(lastGray, fbW, fbH);
+
+        // fold view into base world (as before)
+        centerX = view.cx;
+        centerY = view.cy;
+        zoom = view.zoom;
+        viewScale = 1;
+        viewOffsetX = 0;
+        viewOffsetY = 0;
+        setZoomStatus();
+
+        redrawFromBase();
+
+        currentStage++;
+        stagePending = currentStage < STAGES.length;
+        if (!stagePending) {
+            currentStage = -1;
+            setRenderStatus("idle");
+        } else {
+            const nextScale = STAGES[currentStage].scale;
+            setRenderStatus(
+                `render: stage ${currentStage + 1}/${STAGES.length} scale=${nextScale}`,
+            );
+        }
+    }
+
+    function initWorker() {
+        worker = new Worker("/mandelbrot/mandel-worker.js");
+        worker.onmessage = (e) => {
+            const msg = e.data;
+            switch (msg.type) {
+                case "ready":
+                    workerReady = true;
+                    setRenderStatus("worker ready");
+                    setErrorStatus("");
+                    requestFullRender();
+                    break;
+                case "scan":
+                    handleWorkerScan(msg);
+                    break;
+                case "partial":
+                    handleWorkerPartial(msg);
+                    break;
+                case "frame":
+                    handleWorkerFrame(msg);
+                    break;
+                case "error":
+                    setErrorStatus(msg.message || "worker error");
+                    break;
+            }
+        };
+        worker.onerror = (err) => {
+            setErrorStatus(err.message || "worker error");
+        };
+        worker.onmessageerror = () => {
+            setErrorStatus("worker message error");
+        };
+    }
+
+    // ------------------ controls drag ------------------
+
+    controlsHeader.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        draggingControls = true;
+        controlsHeader.setPointerCapture(e.pointerId);
+        const rect = controls.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+    });
+
+    function endControlsDrag(e) {
+        if (!draggingControls) return;
+        draggingControls = false;
+        try {
+            controlsHeader.releasePointerCapture(e.pointerId);
+        } catch (_) { }
+    }
+
+    window.addEventListener("pointermove", (e) => {
+        if (!draggingControls) return;
+        const x = e.clientX - dragOffsetX;
+        const y = e.clientY - dragOffsetY;
+        controls.style.left = x + "px";
+        controls.style.top = y + "px";
+    });
+
+    controlsHeader.addEventListener("pointerup", endControlsDrag);
+    controlsHeader.addEventListener("pointercancel", endControlsDrag);
+
+    // ------------------ main loop ------------------
+
+    function loop() {
+        const now = performance.now();
+
+        if (
+            interactionActive &&
+            !isPanning &&
+            !isPinching &&
+            now - lastInteractionTime > INTERACTION_SETTLE_MS &&
+            currentStage === -1 &&
+            workerReady
+        ) {
+            interactionActive = false;
+            commitVisualAndReset();
+            requestFullRender();
+        }
+
+        if (stagePending && !jobInFlight) {
+            startWorkerJob(currentStage);
+        }
+
+        if (cursorScreenX != null && cursorScreenY != null) {
+            const world = screenToWorld(cursorScreenX, cursorScreenY);
+            setCursorStatus(world.cx, world.cy);
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    // ------------------ init ------------------
+
+    function init() {
+        resize();
+        updatePaletteBorderColor();
+        setZoomStatus();
+        updateStatus();
+        initWorker();
+        loop();
+    }
+
+    init();
+})();
