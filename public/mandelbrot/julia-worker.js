@@ -7,16 +7,20 @@
 //       jobId,
 //       fbW, fbH,        // *stage* resolution
 //       cRe, cIm,        // Julia parameter
-//       color: { r, g, b }, // base color, 0..255
-//       raw,             // 0..100 (bandwidth slider)
-//       fillInterior,    // 0/1
+//       color: { r, g, b }, // IGNORED (kept for compatibility)
+//       raw,             // IGNORED (0..100, bandwidth slider)
+//       fillInterior,    // IGNORED (0/1)
 //       scale            // stage scale factor (4, 1, ...), just echoed back
 //     }
 //
-//   worker -> main:
-//     { type: "frame", jobId, fbW, fbH, scale, pixels: ArrayBuffer }
+//   worker -> main (GRAYSCALE ONLY):
+//     { type: "frame", jobId, fbW, fbH, scale, gray: ArrayBuffer }
 //
-// Color/glow is matched to the main app (same curve as colorizeGray).
+// Semantics:
+//   gray[i] in [0..255]
+//   - 0   = fast escape
+//   - 255 = interior (did not escape in MAX_ITER)
+//   - intermediate = linear in escape iteration
 
 "use strict";
 
@@ -34,9 +38,6 @@ let posBuffer = null;
 let aPositionLoc = -1;
 let uResolutionLoc = null;
 let uCParamLoc = null;
-let uColorLoc = null;
-let uRawLoc = null;
-let uFillInteriorLoc = null;
 
 // Vertex shader: fullscreen quad
 const VS_SOURCE = `#version 300 es
@@ -48,7 +49,7 @@ void main() {
 }
 `;
 
-// Fragment shader: Julia set with same glow curve as main colorizeGray
+// Fragment shader: Julia set, outputs *linear grayscale* in 0..1
 const FS_SOURCE = `#version 300 es
 precision highp float;
 
@@ -57,9 +58,6 @@ out vec4 outColor;
 
 uniform vec2 u_resolution;
 uniform vec2 u_c;           // (cRe, cIm)
-uniform vec3 u_color;       // base color 0..1
-uniform float u_raw;        // 0..100
-uniform float u_fillInterior; // 0 or 1
 
 const int maxIter = ${MAX_ITER};
 const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
@@ -89,44 +87,14 @@ void main() {
         }
     }
 
+    // Interior = did not escape in maxIter
     bool isInterior = !escaped;
 
+    // Normalized escape value: 1.0 for interior, [0,1) otherwise
     float gNorm = isInterior ? 1.0 : (escapeIter / float(maxIter));
-    if (gNorm <= 0.0) {
-        outColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
 
-    float raw = clamp(u_raw, 0.0, 100.0);
-    bool isLowBlur = raw <= 50.0;
-    bool isHighBlur = raw > 50.0;
-
-    float wVal;
-
-    if (isInterior && u_fillInterior > 0.5) {
-        wVal = 1.0;
-    } else if (isLowBlur) {
-        float clamped = raw;
-        float tOrig = clamped / 100.0;
-        float minExp = 0.25;
-        float maxExp = 3.0;
-        float lowExp = minExp + (1.0 - tOrig) * (maxExp - minExp);
-        float lowToLinear = clamped / 50.0;
-
-        float base = pow(gNorm, lowExp);
-        base = clamp(base, 0.0, 1.0);
-        wVal = base * (1.0 - lowToLinear) + gNorm * lowToLinear;
-    } else { // high blur
-        float u = (raw - 50.0) / 50.0;
-        float bandWidth = 1.0 - 0.8 * u;
-        float highToLinear = (100.0 - raw) / 50.0;
-
-        float burn = gNorm >= bandWidth ? 1.0 : gNorm / bandWidth;
-        wVal = burn * (1.0 - highToLinear) + gNorm * highToLinear;
-    }
-
-    vec3 col = u_color * wVal;
-    outColor = vec4(col, 1.0);
+    float g = clamp(gNorm, 0.0, 1.0);
+    outColor = vec4(g, g, g, 1.0);
 }
 `;
 
@@ -202,9 +170,6 @@ function initGL(width, height) {
         aPositionLoc = gl.getAttribLocation(program, "a_position");
         uResolutionLoc = gl.getUniformLocation(program, "u_resolution");
         uCParamLoc = gl.getUniformLocation(program, "u_c");
-        uColorLoc = gl.getUniformLocation(program, "u_color");
-        uRawLoc = gl.getUniformLocation(program, "u_raw");
-        uFillInteriorLoc = gl.getUniformLocation(program, "u_fillInterior");
 
         posBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
@@ -228,14 +193,12 @@ function initGL(width, height) {
         aPositionLoc = -1;
         uResolutionLoc = null;
         uCParamLoc = null;
-        uColorLoc = null;
-        uRawLoc = null;
-        uFillInteriorLoc = null;
         return false;
     }
 }
 
-function renderJuliaWebGL(fbW, fbH, cRe, cIm, color, raw, fillInterior) {
+// WebGL path: returns Uint8Array(gray) length = fbW*fbH
+function renderJuliaWebGL(fbW, fbH, cRe, cIm) {
     if (!initGL(fbW, fbH)) {
         return null;
     }
@@ -253,70 +216,28 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm, color, raw, fillInterior) {
     gl.uniform2f(uResolutionLoc, fbW, fbH);
     gl.uniform2f(uCParamLoc, cRe, cIm);
 
-    const r = (color && Number.isFinite(color.r)) ? color.r / 255 : 0;
-    const g = (color && Number.isFinite(color.g)) ? color.g / 255 : 1;
-    const b = (color && Number.isFinite(color.b)) ? color.b / 255 : 1;
-    gl.uniform3f(uColorLoc, r, g, b);
-
-    gl.uniform1f(uRawLoc, raw);
-    gl.uniform1f(uFillInteriorLoc, fillInterior ? 1.0 : 0.0);
-
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    const pixels = new Uint8Array(fbW * fbH * 4);
-    gl.readPixels(0, 0, fbW, fbH, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const rgba = new Uint8Array(fbW * fbH * 4);
+    gl.readPixels(0, 0, fbW, fbH, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
 
-    return pixels;
-}
-
-// ------------- CPU fallback with same glow curve -------------
-
-function applyGlow(gNorm, raw, fillInterior, isInterior) {
-    if (gNorm <= 0) return 0;
-
-    raw = Math.max(0, Math.min(100, raw));
-    const isLowBlur = raw <= 50;
-    const isHighBlur = raw > 50;
-
-    if (isInterior && fillInterior) return 1;
-
-    let wVal;
-    if (isLowBlur) {
-        const clamped = raw;
-        const tOrig = clamped / 100;
-        const minExp = 0.25;
-        const maxExp = 3.0;
-        const lowExp = minExp + (1 - tOrig) * (maxExp - minExp);
-        const lowToLinear = clamped / 50;
-
-        let base = Math.pow(gNorm, lowExp);
-        if (base < 0) base = 0;
-        if (base > 1) base = 1;
-        wVal = base * (1 - lowToLinear) + gNorm * lowToLinear;
-    } else if (isHighBlur) {
-        const u = (raw - 50) / 50;
-        const bandWidth = 1 - 0.8 * u;
-        const highToLinear = (100 - raw) / 50;
-
-        const burn = gNorm >= bandWidth ? 1 : gNorm / bandWidth;
-        wVal = burn * (1 - highToLinear) + gNorm * highToLinear;
-    } else {
-        wVal = gNorm;
+    const gray = new Uint8Array(fbW * fbH);
+    let gi = 0;
+    for (let i = 0; i < rgba.length; i += 4) {
+        gray[gi++] = rgba[i]; // R channel; all channels are equal
     }
 
-    return wVal;
+    return gray;
 }
 
-function renderJuliaCPU(fbW, fbH, cRe, cIm, color, raw, fillInterior) {
-    const pixels = new Uint8Array(fbW * fbH * 4);
+// ------------- CPU fallback: pure grayscale -------------
+
+function renderJuliaCPU(fbW, fbH, cRe, cIm) {
+    const gray = new Uint8Array(fbW * fbH);
 
     const aspect = fbW / fbH;
     const scale = 1.5;
     const maxIter = MAX_ITER;
-
-    const rC = (color && Number.isFinite(color.r)) ? color.r : 0;
-    const gC = (color && Number.isFinite(color.g)) ? color.g : 255;
-    const bC = (color && Number.isFinite(color.b)) ? color.b : 255;
 
     let idx = 0;
     for (let j = 0; j < fbH; j++) {
@@ -347,29 +268,12 @@ function renderJuliaCPU(fbW, fbH, cRe, cIm, color, raw, fillInterior) {
 
             const isInterior = !escaped;
             const gNorm = isInterior ? 1 : escapeIter / maxIter;
-
-            if (gNorm <= 0) {
-                pixels[idx++] = 0;
-                pixels[idx++] = 0;
-                pixels[idx++] = 0;
-                pixels[idx++] = 255;
-                continue;
-            }
-
-            const wVal = applyGlow(gNorm, raw, !!fillInterior, isInterior);
-
-            const r = Math.round(rC * wVal);
-            const g = Math.round(gC * wVal);
-            const b = Math.round(bC * wVal);
-
-            pixels[idx++] = r;
-            pixels[idx++] = g;
-            pixels[idx++] = b;
-            pixels[idx++] = 255;
+            const gClamped = gNorm <= 0 ? 0 : gNorm >= 1 ? 1 : gNorm;
+            gray[idx++] = Math.round(gClamped * 255);
         }
     }
 
-    return pixels;
+    return gray;
 }
 
 // ------------- Worker protocol -------------
@@ -386,37 +290,29 @@ self.onmessage = (e) => {
         fbH,
         cRe,
         cIm,
-        color,
-        raw,
-        fillInterior,
+        // color, raw, fillInterior, // now ignored, but accepted
         scale,
     } = msg;
 
-    let pixels = null;
+    let gray = null;
     try {
-        pixels = renderJuliaWebGL(
+        gray = renderJuliaWebGL(
             fbW | 0,
             fbH | 0,
             +cRe,
             +cIm,
-            color,
-            +raw,
-            fillInterior ? 1 : 0,
         );
     } catch (_) {
-        pixels = null;
+        gray = null;
     }
 
-    if (!pixels) {
+    if (!gray) {
         try {
-            pixels = renderJuliaCPU(
+            gray = renderJuliaCPU(
                 fbW | 0,
                 fbH | 0,
                 +cRe,
                 +cIm,
-                color,
-                +raw,
-                fillInterior ? 1 : 0,
             );
         } catch (err) {
             self.postMessage({
@@ -434,8 +330,8 @@ self.onmessage = (e) => {
             fbW,
             fbH,
             scale,
-            pixels: pixels.buffer,
+            gray: gray.buffer,
         },
-        [pixels.buffer],
+        [gray.buffer],
     );
 };

@@ -49,8 +49,7 @@
         render: "WASM worker loading…",
         cursor: "",
         zoom: "",
-        error: "",
-        juliaCursor: "",
+        error: ""
     };
 
     function updateStatus() {
@@ -90,7 +89,6 @@
         const sign = cy >= 0 ? "-" : "+";
         const text = `${re} ${sign} ${imAbs}i`;
 
-        status.juliaCursor = `Julia-set: ${text}`;
         updateStatus();
 
         if (juliaCoordinatesEl) {
@@ -125,6 +123,11 @@
     let lastFbW = 0;
     let lastFbH = 0;
 
+    // Julia grayscale memory (for recolor)
+    let lastJuliaGray = null;
+    let lastJuliaFbW = 0;
+    let lastJuliaFbH = 0;
+
     // screen transform (pan/zoom of base image)
     let viewScale = 1;
     let viewOffsetX = 0;
@@ -150,14 +153,13 @@
     let juliaCurrentJobId = null;
 
     // multi-stage preview (low-res first, then full-res)
-    const JULIA_STAGES = [4, 1]; // scale factors: 4x coarse, then full-res
+    const JULIA_STAGES = [4, 1, 0.25]; // scale factors: 4x coarse, then full-res
     let juliaStageIndex = -1;
 
     // single in-flight job + at most one pending job
     let juliaJobInFlight = false;
     let juliaPendingRequest = null;   // latest requested params while a job is running
     let juliaActiveParams = null;     // params for the currently running job
-
 
     // ------------------ interaction state ------------------
 
@@ -223,12 +225,11 @@
             outH,
             cRe: juliaCursorWorldX,
             cIm: juliaCursorWorldY,
-            color,
-            raw,
-            fillInterior: fillSnap,
+            color,          // now ignored by worker, but kept for compatibility
+            raw,            // now ignored by worker
+            fillInterior: fillSnap, // now ignored by worker
         };
     }
-
 
     function hexToRgb(hex) {
         let h = hex.replace("#", "");
@@ -508,6 +509,34 @@
         redrawFromBase();
     }
 
+    // Julia recolor using same colorizeGray
+    function recolorJuliaFromLastGray() {
+        if (
+            !juliaCanvas ||
+            !lastJuliaGray ||
+            lastJuliaFbW <= 0 ||
+            lastJuliaFbH <= 0
+        ) {
+            return;
+        }
+        const jctx = juliaCanvas.getContext("2d");
+        if (!jctx) return;
+
+        const colored = colorizeGray(lastJuliaGray);
+        const img = new ImageData(colored, lastJuliaFbW, lastJuliaFbH);
+
+        const tmp = document.createElement("canvas");
+        tmp.width = lastJuliaFbW;
+        tmp.height = lastJuliaFbH;
+        const tctx = tmp.getContext("2d");
+        tctx.putImageData(img, 0, 0);
+
+        const outW = juliaCanvas.width;
+        const outH = juliaCanvas.height;
+        jctx.clearRect(0, 0, outW, outH);
+        jctx.drawImage(tmp, 0, 0, lastJuliaFbW, lastJuliaFbH, 0, 0, outW, outH);
+    }
+
     // ---------- generic color changer for UI elements ----------
 
     function updateColorChangers() {
@@ -652,15 +681,15 @@
             fbH,
             cRe: params.cRe,
             cIm: params.cIm,
-            color: params.color,
-            raw: params.raw,
-            fillInterior: params.fillInterior,
+            color: params.color,              // ignored by worker now
+            raw: params.raw,                  // ignored
+            fillInterior: params.fillInterior,// ignored
             scale,
         });
     }
 
     function handleJuliaFrame(msg) {
-        const { jobId, fbW, fbH, pixels, scale } = msg;
+        const { jobId, fbW, fbH, gray, scale } = msg;
         if (juliaCurrentJobId === null || jobId !== juliaCurrentJobId) return;
         if (!juliaCanvas) return;
 
@@ -671,8 +700,10 @@
         const stageH = fbH | 0;
         if (!stageW || !stageH) return;
 
-        const data = new Uint8ClampedArray(pixels);
-        const img = new ImageData(data, stageW, stageH);
+        // incoming is grayscale; colorize with same function as Mandelbrot
+        const grayArr = new Uint8Array(gray);
+        const colored = colorizeGray(grayArr);
+        const img = new ImageData(colored, stageW, stageH);
 
         const tmp = document.createElement("canvas");
         tmp.width = stageW;
@@ -684,6 +715,11 @@
         const outH = juliaCanvas.height;
         jctx.clearRect(0, 0, outW, outH);
         jctx.drawImage(tmp, 0, 0, stageW, stageH, 0, 0, outW, outH);
+
+        // remember last Julia gray for recolor
+        lastJuliaGray = grayArr;
+        lastJuliaFbW = stageW;
+        lastJuliaFbH = stageH;
 
         const havePending = !!juliaPendingRequest;
         const lastStageIndex = JULIA_STAGES.length - 1;
@@ -932,20 +968,16 @@
 
     if (fc) {
         fc.addEventListener("input", () => {
-            // If you have a specific palette-border updater, call it here.
-            // Keep generic color update:
             updateColorChangers();
             recolorFromLastGray();
-            // You might also want Julia worker to respond to palette changes
-            requestJuliaRender();
+            recolorJuliaFromLastGray();
         });
     }
 
     if (bw) {
         bw.addEventListener("input", () => {
             recolorFromLastGray();
-            // optional: Julia worker could depend on band width too
-            requestJuliaRender();
+            recolorJuliaFromLastGray();
         });
     }
 
@@ -961,8 +993,11 @@
             currentStage = -1;
             stagePending = false;
 
+            // Mandelbrot worker still uses fillInterior in the math
             requestFullRender();
-            requestJuliaRender();
+
+            // For Julia, interior fill is handled in colorizeGray only
+            recolorJuliaFromLastGray();
         });
     }
 
