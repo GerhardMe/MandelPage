@@ -72,13 +72,13 @@ import Layout from "../layouts/main.astro";
             <div id="status"></div>
 
             <div class="statusApps">
-                <button id="statusPalette" class="statusItem" type="button"
-                    >Palette</button
-                >
+                <div id="statusPalette" class="toggleBtn">
+                    <span>Palette</span>
+                </div>
                 <span>|</span>
-                <button id="statusJulia" class="statusItem" type="button"
-                    >Julia set</button
-                >
+                <div id="statusJulia" class="toggleBtn">
+                    <span>Julia set</span>
+                </div>
             </div>
 
             <span>|</span>
@@ -207,6 +207,7 @@ import Layout from "../layouts/main.astro";
         margin-right: -1em;
         margin-top: -1.3em;
         text-align: center;
+        user-select: none;
     }
 
     /* ---------- window body ---------- */
@@ -314,18 +315,15 @@ import Layout from "../layouts/main.astro";
         gap: 8px;
     }
 
-    .statusItem {
+    .toggleBtn {
         background: none;
         border: none;
-        pointer-events: none;
-        cursor: default;
-    }
-
-    .statusItem.is-minimized {
-        pointer-events: auto;
         cursor: pointer;
+        span {
+            user-select: none;
+        }
     }
-    .statusItem.is-minimized:hover {
+    .toggleBtn:hover {
         text-decoration: underline;
     }
 

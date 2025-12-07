@@ -1045,7 +1045,6 @@
         controls.style.display = minimized ? "none" : "";
 
         if (statusPaletteBtn) {
-            statusPaletteBtn.classList.toggle("is-minimized", minimized);
             statusPaletteBtn.classList.toggle("colorChanger", minimized);
             statusPaletteBtn.style.color = minimized ? fc.value : statusEl.style.color;
         }
@@ -1058,7 +1057,6 @@
         juliaBox.style.display = minimized ? "none" : "";
 
         if (statusJuliaBtn) {
-            statusJuliaBtn.classList.toggle("is-minimized", minimized);
             statusJuliaBtn.classList.toggle("colorChanger", minimized);
             statusJuliaBtn.style.color = minimized ? fc.value : statusEl.style.color;
         }
@@ -1073,48 +1071,65 @@
     }
 
     function setupMinimizeBehavior() {
+        function isPaletteMinimized() {
+            if (!controls) return true;
+            return (
+                controls.classList.contains("minimized") ||
+                controls.style.display === "none"
+            );
+        }
+
+        function isJuliaMinimized() {
+            if (!juliaBox) return true;
+            return (
+                juliaBox.classList.contains("minimized") ||
+                juliaBox.style.display === "none"
+            );
+        }
+
+        function togglePalette() {
+            if (!controls) return;
+            const next = !isPaletteMinimized();
+            setPaletteMinimized(next);
+        }
+
+        function toggleJulia() {
+            if (!juliaBox) return;
+            const next = !isJuliaMinimized();
+            setJuliaMinimized(next);
+        }
+
         // Header buttons
         if (paletteMinBtn) {
-            paletteMinBtn.addEventListener("click", () => {
-                const minimized = !controls.classList.contains("minimized");
-                setPaletteMinimized(minimized);
+            paletteMinBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                togglePalette();
             });
         }
 
         if (juliaMinBtn) {
-            juliaMinBtn.addEventListener("click", () => {
-                const minimized = !juliaBox.classList.contains("minimized");
-                setJuliaMinimized(minimized);
+            juliaMinBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                toggleJulia();
             });
         }
 
-        // Status-bar restore
+        // Status-bar buttons – same toggle behavior
         if (statusPaletteBtn) {
             statusPaletteBtn.addEventListener("click", () => {
-                if (!controls) return;
-                if (controls.classList.contains("minimized") ||
-                    controls.style.display === "none") {
-                    setPaletteMinimized(false);
-                }
+                togglePalette();
             });
         }
 
         if (statusJuliaBtn) {
             statusJuliaBtn.addEventListener("click", () => {
-                if (!juliaBox) return;
-                if (juliaBox.classList.contains("minimized") ||
-                    juliaBox.style.display === "none") {
-                    setJuliaMinimized(false);
-                }
+                toggleJulia();
             });
         }
 
-        // Initial state 
-        const initialPaletteMin = false;
-        const initialJuliaMin = false;
-
-        setPaletteMinimized(initialPaletteMin);
-        setJuliaMinimized(initialJuliaMin);
+        // Initial state
+        setPaletteMinimized(false);
+        setJuliaMinimized(false);
     }
 
     // ------------------ Julia panel ------------------
