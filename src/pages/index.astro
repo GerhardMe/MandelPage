@@ -7,43 +7,59 @@ import Layout from "../layouts/main.astro";
         <div id="canvasWrapper">
             <canvas id="view"></canvas>
 
-            <div id="controls" class="colorChanger">
-                <div class="appHeader" id="controlsHeader">Palette</div>
-                <div class="controls-row">
-                    <label>
-                        Color
-                        <input type="color" id="fc" />
-                    </label>
-                    <label>
-                        <input type="checkbox" id="fillInside" />
-                        Fill interior
-                    </label>
+            <div id="controls" class="appWindow colorChanger">
+                <div id="controlsHeader" class="appHeader">
+                    <span class="appTitle">Palette</span>
+                    <button class="appMinimize colorChanger" type="button"
+                        >─</button
+                    >
                 </div>
-                <div class="controls-row">
-                    <label style="flex: 1 1 auto">
-                        Glow
-                        <input
-                            type="range"
-                            id="bw"
-                            min="0"
-                            max="100"
-                            value="80"
-                        />
-                    </label>
+
+                <div class="appBody" id="controlsContent">
+                    <div class="row">
+                        <label>
+                            Color <input type="color" id="fc" />
+                        </label>
+                        <label>
+                            Fill interior <input
+                                type="checkbox"
+                                id="fillInside"
+                            />
+                        </label>
+                    </div>
+
+                    <div class="row">
+                        <label class="flex">
+                            Glow
+                            <input
+                                type="range"
+                                id="bw"
+                                min="0"
+                                max="100"
+                                value="80"
+                            />
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div id="juliaBox" class="colorChanger">
-            <div class="appHeader" id="juliaHeader">Julia set</div>
-            <div id="juliaContent">
+        <div id="juliaBox" class="appWindow colorChanger">
+            <div id="juliaHeader" class="appHeader">
+                <span class="appTitle">Julia set</span>
+                <button class="appMinimize colorChanger" type="button">─</button
+                >
+            </div>
+
+            <div id="juliaContent" class="appBody">
                 <canvas id="juliaCanvas"></canvas>
                 <div id="juliaCoordinates">Loading Julia-coordinates...</div>
+                <div id="juliaResizeHandle" class="resizeHandle colorChanger">
+                </div>
             </div>
-            <div id="juliaResizeHandle"></div>
         </div>
 
-        <div id="juliaCursor" class="colorChanger">
+        <div id="juliaCursor" class="cursorWidget colorChanger">
             <div class="ver">
                 <div class="line"></div><div class="line"></div>
             </div>
@@ -52,15 +68,34 @@ import Layout from "../layouts/main.astro";
             </div>
         </div>
 
-        <div id="statusBar">
-            <div id="status">JS must be enabled for this site</div>
-            <div id="about">
-                <a
-                    class="colorChanger"
-                    id="gerhardLink"
-                    href="https://gerhard.page">Built by Gerhard</a
+        <div id="statusBar" class="statusBar">
+            <div id="status"></div>
+
+            <div class="statusApps">
+                <button id="statusPalette" class="statusItem" type="button"
+                    >Palette</button
+                >
+                <span>|</span>
+                <button id="statusJulia" class="statusItem" type="button"
+                    >Julia set</button
                 >
             </div>
+
+            <span>|</span>
+
+            <div id="about">
+                <a
+                    id="gerhardLink"
+                    class="colorChanger link"
+                    href="https://gerhard.page"
+                >
+                    Built by Gerhard
+                </a>
+            </div>
+
+            <span>|</span>
+
+            <button class="statusItem" type="button">?</button>
         </div>
     </div>
 </Layout>
@@ -69,6 +104,14 @@ import Layout from "../layouts/main.astro";
 <script is:inline src="/mandelbrot/mandel-main.js"></script>
 
 <style>
+    /* ---------- global ---------- */
+
+    :root {
+        --app-margin: 16px;
+        --app-padding: 11px;
+        --translucent-bg: rgba(0, 0, 0, 0.75);
+    }
+
     html,
     body {
         margin: 0;
@@ -77,12 +120,8 @@ import Layout from "../layouts/main.astro";
         height: 100%;
         background: #000;
         color: #eee;
-        font-family: system-ui, sans-serif;
+        font-family: "sans", system-ui, sans-serif;
         overflow: hidden;
-
-        --app-margin: 16px; /* global scope */
-        --app-padding: 11px;
-        --translucent-bg: rgba(0, 0, 0, 0.75);
     }
 
     #app {
@@ -108,98 +147,160 @@ import Layout from "../layouts/main.astro";
         cursor: grabbing;
     }
 
-    /* Palette / controls box */
-    #controls {
-        position: fixed;
-        top: var(--app-margin);
-        left: var(--app-margin);
-        padding: var(--app-padding);
-        background: var(--translucent-bg);
-        border-radius: 2px;
-        border: 1px solid;
-        font-size: 12px;
-        z-index: 10;
-        user-select: none;
-        color: white !important;
-        min-width: 20em;
+    label {
+        display: flex;
+        align-items: center;
+        gap: 0.8em;
     }
 
+    /* ---------- generic app window ---------- */
+
+    .appWindow {
+        position: fixed;
+        padding: var(--app-padding);
+        background: var(--translucent-bg);
+        border: 1px solid;
+        border-radius: 2px;
+        user-select: none;
+        font-size: 12px;
+        color: white !important;
+        box-sizing: border-box;
+        z-index: 10;
+    }
+
+    /* palette left, julia right (their IDs still define placement) */
+    #controls {
+        top: var(--app-margin);
+        left: var(--app-margin);
+        min-width: 250px;
+    }
+    #juliaBox {
+        top: var(--app-margin);
+        right: var(--app-margin);
+        width: 530px;
+        height: 410px;
+    }
+
+    /* ---------- window header ---------- */
+
     .appHeader {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: -1em -1em -1em -1em;
+        padding: 1em;
+        height: 4em;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.03em;
         cursor: grab;
-        margin: -1em -1em -1em -1em;
-        padding: 1em 1em 1em 1em;
-        height: 4em;
-
-        color: white !important;
     }
 
     .appHeader:active {
         cursor: grabbing;
     }
 
-    #controls .controls-row {
+    .appMinimize {
+        cursor: pointer;
+        width: 3em;
+        height: 2em;
+        margin-right: -1em;
+        margin-top: -1.3em;
+        text-align: center;
+    }
+
+    /* ---------- window body ---------- */
+
+    .appBody {
+        margin-top: 0.5em;
+        flex: 1 1 auto;
+    }
+
+    .row {
         display: flex;
         align-items: center;
         gap: 8px;
         margin-bottom: 4px;
     }
 
-    #controls label {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        margin: 0;
+    .flex {
+        flex: 1 1 auto;
     }
 
-    #controls input[type="color"] {
+    /* ---------- range & color inputs ---------- */
+
+    input[type="color"] {
         width: 1.3em;
         height: 1.3em;
+        border: none;
         padding: 0;
         border-radius: 5px;
-        border: 0px;
         background: #111;
-        margin-right: 0.5em;
     }
 
-    #controls input[type="checkbox"] {
-        margin: 0;
-        appearance: checkbox;
-    }
-
-    #controls input[type="range"] {
+    input[type="range"] {
         width: 80%;
-        margin: 2px 0 0 0;
-        appearance: auto;
     }
 
-    /* Bottom status bar */
-    #statusBar {
-        flex: 0 0 auto;
-        height: 18px;
+    /* ---------- julia specifics ---------- */
+
+    #juliaCanvas {
+        width: 100%;
+        height: 100%;
+        background: #fff;
+        border-radius: 2px;
+    }
+
+    .resizeHandle {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        right: 3px;
+        bottom: 3px;
+        border-right: 1px solid;
+        border-bottom: 1px solid;
+        cursor: se-resize;
+    }
+
+    #juliaCoordinates {
+        margin-top: 8px;
+        text-align: right;
+    }
+
+    /* ---------- minimized states (used by JS) ---------- */
+
+    /* Completely hide the entire window when minimized */
+    .appWindow.minimized {
+        display: none;
+    }
+
+    /* Body and resizehandle rules are now redundant but harmless;
+   you can keep or remove them. */
+    .appWindow.minimized .appBody {
+        display: none;
+    }
+    #juliaBox.minimized .resizeHandle {
+        display: none;
+    }
+
+    /* hide julia cursor when juliaBox minimized */
+    #juliaBox.minimized + #juliaCursor {
+        display: none;
+    }
+
+    /* ---------- status bar ---------- */
+
+    .statusBar {
+        height: 20px;
         padding: 4px 8px;
         background: #0c0c0c;
         border-top: 1px solid #3a3a3a;
         font-size: 11px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-            "Liberation Mono", "Courier New", monospace;
         display: flex;
         align-items: center;
-        white-space: nowrap;
-        overflow: hidden;
-        opacity: 0.8;
         gap: 8px;
-    }
-
-    #gerhardLink {
-        cursor: pointer;
-        text-decoration: none;
-    }
-
-    #gerhardLink:hover {
-        text-decoration: underline;
+        opacity: 0.8;
+        white-space: nowrap;
     }
 
     #status {
@@ -207,133 +308,77 @@ import Layout from "../layouts/main.astro";
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    /* Julia box – visually like palette, but right side */
-    #juliaBox {
-        position: fixed;
-        top: var(--app-margin);
-        right: var(--app-margin);
-        padding: var(--app-padding);
-        background: var(--translucent-bg);
-        border-radius: 2px;
-        border: 1px solid;
-        font-size: 12px;
-        z-index: 11;
-        user-select: none;
-        width: 530px;
-        height: 410px;
-        box-sizing: border-box;
+
+    .statusApps {
         display: flex;
-        flex-direction: column;
+        gap: 8px;
     }
 
-    /* Content wraps the white canvas + resize handle */
-    #juliaContent {
-        position: relative;
-        flex: 1 1 auto;
-        margin-top: 6px;
+    .statusItem {
+        background: none;
+        border: none;
+        pointer-events: none;
+        cursor: default;
     }
 
-    #juliaCoordinates {
-        color: white;
-        margin-top: 10px;
-        text-align: right;
+    .statusItem.is-minimized {
+        pointer-events: auto;
+        cursor: pointer;
+    }
+    .statusItem.is-minimized:hover {
+        text-decoration: underline;
     }
 
-    /* Opaque white canvas inside transparent box */
-    #juliaCanvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-        background: #ffffff;
-        border-radius: 2px;
+    .link:hover {
+        text-decoration: underline;
     }
 
-    /* Resize handle (bottom-right corner) */
-    #juliaResizeHandle {
+    /* ---------- julia cursor ---------- */
+
+    .cursorWidget {
         position: absolute;
-        width: 12px;
-        height: 12px;
-        right: 3px;
-        bottom: 3px;
-        cursor: se-resize;
-        box-sizing: border-box;
-        border-right: 1px solid;
-        border-bottom: 1px solid;
-    }
-
-    /* Minimized Julia: only header visible */
-    #juliaBox.minimized {
-        height: auto;
-    }
-
-    #juliaBox.minimized #juliaContent {
-        display: none;
-    }
-
-    /* POI / Julia-aim cursor */
-    #juliaCursor {
-        position: absolute;
-        top: 0;
-        left: 0;
         width: 60px;
         height: 60px;
         border-radius: 50%;
+        background: var(--translucent-bg);
+        transform: translate(-50%, -50%);
         cursor: grab;
         z-index: 5;
-        transform: translate(-50%, -50%);
-        background: var(--translucent-bg);
-
-        user-select: none !important;
         overflow: hidden;
-
-        div {
-            position: absolute;
-            justify-content: space-evenly;
-            width: 100%;
-            height: 100%;
-        }
-        .ver {
-            display: flex;
-            flex-direction: column;
-            transform: translate(50%);
-
-            div {
-                border-left: 1px solid;
-            }
-        }
-
-        .hor {
-            display: flex;
-            flex-direction: row;
-            transform: translate(0, 50%);
-
-            div {
-                border-top: 1px solid;
-            }
-        }
-
-        .line {
-            width: calc(50% - 5px);
-            height: calc(50% - 5px);
-            position: relative;
-        }
+        user-select: none;
     }
 
-    #juliaCursor:active {
+    .cursorWidget:active {
         cursor: grabbing;
     }
 
-    /* Neutralise any mobile/hi-DPI scaling from the Layout on this page */
-    @media (min-resolution: 2dppx),
-        (-webkit-min-device-pixel-ratio: 2),
-        (max-width: 900px) {
-        :global(html),
-        :global(body),
-        :global(main),
-        :global(#app) {
-            zoom: 1 !important;
-            transform: none !important;
-            font-size: 16px !important;
-        }
+    .cursorWidget .ver,
+    .cursorWidget .hor {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: space-evenly;
+    }
+
+    .cursorWidget .ver {
+        flex-direction: column;
+        transform: translate(50%);
+    }
+    .cursorWidget .hor {
+        flex-direction: row;
+        transform: translate(0, 50%);
+    }
+
+    .cursorWidget .ver .line {
+        border-left: 1px solid;
+    }
+    .cursorWidget .hor .line {
+        border-top: 1px solid;
+    }
+
+    .cursorWidget .line {
+        width: calc(50% - 5px);
+        height: calc(50% - 5px);
     }
 </style>

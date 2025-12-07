@@ -13,12 +13,10 @@
     const bw = document.getElementById("bw");
     const fillInside = document.getElementById("fillInside");
     const statusEl = document.getElementById("status");
-    const link = document.getElementById("gerhardLink");
 
     // Julia panel
     const juliaBox = document.getElementById("juliaBox");
     const juliaHeader = document.getElementById("juliaHeader");
-    const juliaToggle = document.getElementById("juliaToggle");
     const juliaContent = document.getElementById("juliaContent");
     const juliaCanvas = document.getElementById("juliaCanvas");
     const juliaResizeHandle = document.getElementById("juliaResizeHandle");
@@ -29,7 +27,21 @@
     // External coordinates display
     const juliaCoordinatesEl = document.getElementById("juliaCoordinates");
 
+    // Status-bar app links
+    const statusPaletteBtn = document.getElementById("statusPalette");
+    const statusJuliaBtn = document.getElementById("statusJulia");
+
+    // Minimize buttons ("─" in headers)
+    const paletteMinBtn = controlsHeader
+        ? controlsHeader.querySelector(".appMinimize")
+        : null;
+    const juliaMinBtn = juliaHeader
+        ? juliaHeader.querySelector(".appMinimize")
+        : null;
+
     if (fc) fc.value = "#00ffff";
+
+    const decimal = 24;
 
     // ------------------ status ------------------
 
@@ -61,13 +73,10 @@
         updateStatus();
     }
 
-    // keep last cursor text; do not clear on null
     function setCursorStatus(cx, cy) {
-        if (cx == null || cy == null) {
-            return;
-        }
-        const re = cx.toFixed(16);
-        const imAbs = Math.abs(cy).toFixed(16);
+        if (cx == null || cy == null) return;
+        const re = cx.toFixed(decimal);
+        const imAbs = Math.abs(cy).toFixed(decimal);
         const sign = cy >= 0 ? "-" : "+";
         status.cursor = `cursor: ${re} ${sign} ${imAbs}i`;
         updateStatus();
@@ -75,17 +84,14 @@
 
     function setJuliaCursorStatus(cx, cy) {
         if (cx == null || cy == null) return;
-        const re = cx.toFixed(16);
-        const imAbs = Math.abs(cy).toFixed(16);
+        const re = cx.toFixed(decimal);
+        const imAbs = Math.abs(cy).toFixed(decimal);
         const sign = cy >= 0 ? "-" : "+";
         const text = `${re} ${sign} ${imAbs}i`;
 
-        // update external DOM element
         if (juliaCoordinatesEl) {
             juliaCoordinatesEl.textContent = "Julia-set: " + text;
         }
-
-        updateStatus();
     }
 
     function setErrorStatus(msg) {
@@ -128,11 +134,7 @@
     let currentJobId = null;
     let jobInFlight = false;
 
-    const STAGES = [
-        { scale: 4 },
-        { scale: 1 },
-        { scale: 0.25 },
-    ];
+    const STAGES = [{ scale: 4 }, { scale: 1 }, { scale: 0.25 }];
     let currentStage = -1;
     let stagePending = false;
 
@@ -174,7 +176,6 @@
     let juliaCursorWorldY = null;
     let juliaCursorDragging = false;
 
-    // Default Julia c value
     const JULIA_CURSOR_START_RE = -0.5125;
     const JULIA_CURSOR_START_IM = -0.5213;
     const HAS_JULIA_START =
@@ -373,25 +374,23 @@
         const isLowBlur = raw <= 50;
         const isHighBlur = raw > 50;
 
-        // low-blur (0..50): exponent curve blended to linear
         let lowExp = null;
         let lowToLinear = 0;
         if (isLowBlur) {
-            const clamped = raw;          // 0..50
+            const clamped = raw;
             const tOrig = clamped / 100;
             const minExp = 0.25;
             const maxExp = 3.0;
             lowExp = minExp + (1 - tOrig) * (maxExp - minExp);
-            lowToLinear = clamped / 50;   // 0..1
+            lowToLinear = clamped / 50;
         }
 
-        // high-blur (50..100): burn band blended to linear
         let bandWidth = null;
         let highToLinear = 0;
         if (isHighBlur) {
-            const u = (raw - 50) / 50; // 0..1 for 50→100
-            bandWidth = 1 - 0.8 * u;   // 1 → 0.2
-            highToLinear = (100 - raw) / 50; // 1..0
+            const u = (raw - 50) / 50;
+            bandWidth = 1 - 0.8 * u;
+            highToLinear = (100 - raw) / 50;
         }
 
         let o = 0;
@@ -407,7 +406,6 @@
                 const isFilledInterior = fillInterior && v === 255;
 
                 if (isFilledInterior) {
-                    // fully saturated inside-set pixels
                     wVal = 1;
                 } else if (isLowBlur) {
                     let base = Math.pow(gNorm, lowExp);
@@ -475,10 +473,6 @@
         });
     }
 
-    function updatePaletteBorderColor() {
-        updateColorChangers();
-    }
-
     // ------------------ bake zoom/pan into base + reset view ------------------
 
     function bakeTransformIntoBase() {
@@ -519,10 +513,19 @@
     // ------------------ Julia cursor helpers ------------------
 
     function updateJuliaCursorScreenPosition() {
-        if (!juliaCursorEl || juliaCursorWorldX == null || juliaCursorWorldY == null) return;
+        if (
+            !juliaCursorEl ||
+            juliaCursorWorldX == null ||
+            juliaCursorWorldY == null
+        )
+            return;
+
+        // if Julia box is minimized/hidden, don't bother
+        if (juliaBox && juliaBox.classList.contains("minimized")) return;
+        if (juliaBox && juliaBox.style.display === "none") return;
+
         const { sx, sy } = worldToScreen(juliaCursorWorldX, juliaCursorWorldY);
         juliaCursorEl.style.display = "block";
-        // (sx, sy) is the CENTER of the circle; CSS keeps it centered
         juliaCursorEl.style.transform =
             `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
     }
@@ -533,15 +536,9 @@
         let sx = clientX - rect.left;
         let sy = clientY - rect.top;
 
-        // Interpret the pointer as being on the bottom-right of the cursor circle.
-        // Convert that to the circle's center by subtracting half width/height.
-
         if (juliaCursorEl) {
             const w = juliaCursorEl.offsetWidth || 0;
             const h = juliaCursorEl.offsetHeight || 0;
-
-            // interpret pointer as being at (fractionX, fractionY) of the box,
-            // and convert to center coordinates
             const dx = (0.7 - 0.5) * w;
             const dy = (0.7 - 0.5) * h;
             sx -= dx;
@@ -559,18 +556,9 @@
         if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
         if (!juliaCanvas) return;
 
-        // report Julia cursor world position
         setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY);
 
-        // hook up your Julia rendering here
-        // e.g., post to a worker:
-        // juliaWorker.postMessage({
-        //     type: "renderJulia",
-        //     cRe: juliaCursorWorldX,
-        //     cIm: juliaCursorWorldY,
-        //     width: juliaCanvas.width,
-        //     height: juliaCanvas.height,
-        // });
+        // hook up Julia rendering here if you want
     }
 
     function setupJuliaCursorDrag() {
@@ -741,7 +729,9 @@
     }
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
-    juliaCursorEl.addEventListener("wheel", handleWheel, { passive: false });
+    if (juliaCursorEl) {
+        juliaCursorEl.addEventListener("wheel", handleWheel, { passive: false });
+    }
 
     // ------------------ palette controls ------------------
 
@@ -960,6 +950,13 @@
 
         headerEl.addEventListener("pointerdown", (e) => {
             if (e.button !== 0) return;
+
+            // Don't start a drag if the pointer is on a minimize button
+            // (or any element inside it).
+            if (e.target.closest(".appMinimize")) {
+                return;
+            }
+
             dragging = true;
             headerEl.setPointerCapture(e.pointerId);
             const rect = panelEl.getBoundingClientRect();
@@ -988,6 +985,7 @@
         headerEl.addEventListener("pointerup", endDrag);
         headerEl.addEventListener("pointercancel", endDrag);
     }
+
 
     function setupResizablePanel(boxEl, handleEl, minWidth, minHeight, onResize) {
         if (!boxEl || !handleEl) return;
@@ -1038,6 +1036,87 @@
         handleEl.addEventListener("pointercancel", endResize);
     }
 
+    // ------------------ minimize helpers ------------------
+
+    function setPaletteMinimized(minimized) {
+        if (!controls) return;
+
+        controls.classList.toggle("minimized", minimized);
+        controls.style.display = minimized ? "none" : "";
+
+        if (statusPaletteBtn) {
+            statusPaletteBtn.classList.toggle("is-minimized", minimized);
+            statusPaletteBtn.classList.toggle("colorChanger", minimized);
+            statusPaletteBtn.style.color = minimized ? fc.value : statusEl.style.color;
+        }
+    }
+
+    function setJuliaMinimized(minimized) {
+        if (!juliaBox) return;
+
+        juliaBox.classList.toggle("minimized", minimized);
+        juliaBox.style.display = minimized ? "none" : "";
+
+        if (statusJuliaBtn) {
+            statusJuliaBtn.classList.toggle("is-minimized", minimized);
+            statusJuliaBtn.classList.toggle("colorChanger", minimized);
+            statusJuliaBtn.style.color = minimized ? fc.value : statusEl.style.color;
+        }
+
+        if (juliaCursorEl) {
+            juliaCursorEl.style.display = minimized ? "none" : "";
+        }
+
+        if (!minimized) {
+            requestAnimationFrame(syncJuliaCanvasSize);
+        }
+    }
+
+    function setupMinimizeBehavior() {
+        // Header buttons
+        if (paletteMinBtn) {
+            paletteMinBtn.addEventListener("click", () => {
+                const minimized = !controls.classList.contains("minimized");
+                setPaletteMinimized(minimized);
+            });
+        }
+
+        if (juliaMinBtn) {
+            juliaMinBtn.addEventListener("click", () => {
+                const minimized = !juliaBox.classList.contains("minimized");
+                setJuliaMinimized(minimized);
+            });
+        }
+
+        // Status-bar restore
+        if (statusPaletteBtn) {
+            statusPaletteBtn.addEventListener("click", () => {
+                if (!controls) return;
+                if (controls.classList.contains("minimized") ||
+                    controls.style.display === "none") {
+                    setPaletteMinimized(false);
+                }
+            });
+        }
+
+        if (statusJuliaBtn) {
+            statusJuliaBtn.addEventListener("click", () => {
+                if (!juliaBox) return;
+                if (juliaBox.classList.contains("minimized") ||
+                    juliaBox.style.display === "none") {
+                    setJuliaMinimized(false);
+                }
+            });
+        }
+
+        // Initial state 
+        const initialPaletteMin = false;
+        const initialJuliaMin = false;
+
+        setPaletteMinimized(initialPaletteMin);
+        setJuliaMinimized(initialJuliaMin);
+    }
+
     // ------------------ Julia panel ------------------
 
     function syncJuliaCanvasSize() {
@@ -1046,7 +1125,7 @@
         const boxRect = juliaBox.getBoundingClientRect();
 
         const width = Math.max(1, Math.floor(boxRect.width) - 24);
-        const height = Math.max(1, Math.floor(boxRect.height - 46 - 30));
+        const height = Math.max(1, Math.floor(boxRect.height - 80));
 
         juliaContent.style.width = width + "px";
         juliaContent.style.height = height + "px";
@@ -1061,18 +1140,6 @@
     function setupJuliaPanel() {
         if (!juliaBox || !juliaHeader || !juliaCanvas || !juliaContent) return;
 
-        setupDraggablePanel(juliaBox, juliaHeader);
-
-        if (juliaToggle) {
-            juliaToggle.addEventListener("click", () => {
-                const minimized = juliaBox.classList.toggle("minimized");
-                juliaToggle.textContent = minimized ? "+" : "−";
-                if (!minimized) {
-                    requestAnimationFrame(syncJuliaCanvasSize);
-                }
-            });
-        }
-
         setupResizablePanel(
             juliaBox,
             juliaResizeHandle,
@@ -1082,7 +1149,7 @@
         );
 
         requestAnimationFrame(() => {
-            syncJuliaCanvasSize();
+            if (juliaBox.classList.contains("minimized")) return;
             const jctx = juliaCanvas.getContext("2d");
             if (jctx) {
                 jctx.fillStyle = "#ffffff";
@@ -1118,7 +1185,6 @@
             setCursorStatus(world.cx, world.cy);
         }
 
-        // keep Julia cursor locked to world position as view pans/zooms
         updateJuliaCursorScreenPosition();
 
         requestAnimationFrame(loop);
@@ -1128,21 +1194,16 @@
 
     function init() {
         resize();
-        updatePaletteBorderColor();
         setZoomStatus();
         updateStatus();
         initWorker();
 
-        // Palette panel drag
         setupDraggablePanel(controls, controlsHeader);
-
-        // Julia UI
+        setupDraggablePanel(juliaBox, juliaHeader);
+        setupMinimizeBehavior();
         setupJuliaPanel();
-
-        // Julia cursor drag
         setupJuliaCursorDrag();
 
-        // Default Julia cursor position:
         const view = getCurrentView();
         if (HAS_JULIA_START) {
             juliaCursorWorldX = JULIA_CURSOR_START_RE;
@@ -1153,6 +1214,7 @@
         }
         updateJuliaCursorScreenPosition();
         updateJuliaFromCursor();
+        updateColorChangers();
 
         loop();
     }
