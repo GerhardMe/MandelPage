@@ -23,6 +23,9 @@
     const juliaCanvas = document.getElementById("juliaCanvas");
     const juliaResizeHandle = document.getElementById("juliaResizeHandle");
 
+    // Julia cursor (world-anchored, draggable)
+    const juliaCursorEl = document.getElementById("juliaCursor");
+
     if (fc) fc.value = "#00ffff";
 
     // ------------------ status ------------------
@@ -30,6 +33,7 @@
     const status = {
         render: "WASM worker loading…",
         cursor: "",
+        juliaCursor: "",        // *** NEW ***
         zoom: "",
         error: "",
     };
@@ -40,6 +44,7 @@
         if (status.zoom) parts.push(status.zoom);
         if (status.error) parts.push(status.error);
         if (status.cursor) parts.push(status.cursor);
+        if (status.juliaCursor) parts.push(status.juliaCursor); // *** NEW ***
         statusEl.textContent = parts.join(" | ");
     }
 
@@ -54,16 +59,24 @@
         updateStatus();
     }
 
+    // keep last cursor text; do not clear on null
     function setCursorStatus(cx, cy) {
         if (cx == null || cy == null) {
-            status.cursor = "";
-            updateStatus();
             return;
         }
-        const re = cx.toFixed(6);
-        const imAbs = Math.abs(cy).toFixed(6);
+        const re = cx.toFixed(16);
+        const imAbs = Math.abs(cy).toFixed(16);
         const sign = cy >= 0 ? "+" : "-";
         status.cursor = `cursor: ${re} ${sign} ${imAbs}i`;
+        updateStatus();
+    }
+
+    function setJuliaCursorStatus(cx, cy) {
+        if (cx == null || cy == null) return;
+        const re = cx.toFixed(16);
+        const imAbs = Math.abs(cy).toFixed(16);
+        const sign = cy >= 0 ? "+" : "-";
+        status.juliaCursor = `julia-set: ${re} ${sign} ${imAbs}i`;
         updateStatus();
     }
 
@@ -143,9 +156,22 @@
     let pinchAnchorWorldX = 0;
     let pinchAnchorWorldY = 0;
 
-    // cursor
+    // cursor (for status bar)
     let cursorScreenX = null;
     let cursorScreenY = null;
+
+    // ------------------ Julia cursor state (world-anchored) ------------------
+
+    let juliaCursorWorldX = null;
+    let juliaCursorWorldY = null;
+    let juliaCursorDragging = false;
+
+    // Set these to your preferred default c = a + bi
+    const JULIA_CURSOR_START_RE = -0.75;
+    const JULIA_CURSOR_START_IM = 0;
+    const HAS_JULIA_START =
+        Number.isFinite(JULIA_CURSOR_START_RE) &&
+        Number.isFinite(JULIA_CURSOR_START_IM);
 
     // ------------------ helpers ------------------
 
@@ -215,6 +241,31 @@
         const cx = worldX0 + u * worldWidth;
         const cy = worldY0 + v * worldHeight;
         return { cx, cy };
+    }
+
+    function worldToScreen(cx, cy) {
+        const { worldWidth, worldHeight, worldX0, worldY0 } = worldParamsFor(
+            centerX,
+            centerY,
+            zoom,
+        );
+
+        if (!fullW || !fullH || !worldWidth || !worldHeight) {
+            return { sx: fullW / 2, sy: fullH / 2 };
+        }
+
+        const s = viewScale || 1;
+
+        const u = (cx - worldX0) / worldWidth;
+        const v = (cy - worldY0) / worldHeight;
+
+        const baseX = u * fullW;
+        const baseY = v * fullH;
+
+        const sx = baseX * s + viewOffsetX;
+        const sy = baseY * s + viewOffsetY;
+
+        return { sx, sy };
     }
 
     function getCurrentView() {
@@ -462,6 +513,73 @@
         redrawFromBase();
     }
 
+    // ------------------ Julia cursor helpers ------------------
+
+    function updateJuliaCursorScreenPosition() {
+        if (!juliaCursorEl || juliaCursorWorldX == null || juliaCursorWorldY == null) return;
+        const { sx, sy } = worldToScreen(juliaCursorWorldX, juliaCursorWorldY);
+        juliaCursorEl.style.display = "block";
+        juliaCursorEl.style.transform =
+            `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
+    }
+
+    function setJuliaCursorFromClient(clientX, clientY) {
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const sx = clientX - rect.left;
+        const sy = clientY - rect.top;
+        const world = screenToWorld(sx, sy);
+        juliaCursorWorldX = world.cx;
+        juliaCursorWorldY = world.cy;
+        updateJuliaCursorScreenPosition();
+        updateJuliaFromCursor();
+    }
+
+    function updateJuliaFromCursor() {
+        if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
+        if (!juliaCanvas) return;
+
+        // report Julia cursor world position like the regular cursor
+        setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY); // *** NEW ***
+
+        // hook up your Julia rendering here
+        // e.g., post to a worker:
+        // juliaWorker.postMessage({
+        //     type: "renderJulia",
+        //     cRe: juliaCursorWorldX,
+        //     cIm: juliaCursorWorldY,
+        //     width: juliaCanvas.width,
+        //     height: juliaCanvas.height,
+        // });
+    }
+
+    function setupJuliaCursorDrag() {
+        if (!juliaCursorEl) return;
+
+        juliaCursorEl.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
+            juliaCursorDragging = true;
+            juliaCursorEl.setPointerCapture(e.pointerId);
+            setJuliaCursorFromClient(e.clientX, e.clientY);
+        });
+
+        function endDrag(e) {
+            if (!juliaCursorDragging) return;
+            juliaCursorDragging = false;
+            try {
+                juliaCursorEl.releasePointerCapture(e.pointerId);
+            } catch (_) { }
+        }
+
+        window.addEventListener("pointermove", (e) => {
+            if (!juliaCursorDragging) return;
+            setJuliaCursorFromClient(e.clientX, e.clientY);
+        });
+
+        juliaCursorEl.addEventListener("pointerup", endDrag);
+        juliaCursorEl.addEventListener("pointercancel", endDrag);
+    }
+
     // ------------------ canvas pointer / touch ------------------
 
     canvas.addEventListener("pointerdown", (e) => {
@@ -552,9 +670,9 @@
     });
 
     canvas.addEventListener("pointerleave", () => {
+        // stop updating status, but keep last text
         cursorScreenX = null;
         cursorScreenY = null;
-        setCursorStatus(null, null);
     });
 
     function endPan(e) {
@@ -910,13 +1028,9 @@
         if (!juliaCanvas || !juliaContent || !juliaBox || !juliaHeader) return;
 
         const boxRect = juliaBox.getBoundingClientRect();
-        const boxStyle = getComputedStyle(juliaBox);
 
         const width = Math.max(1, Math.floor(boxRect.width) - 24);
-        const height = Math.max(
-            1,
-            Math.floor(boxRect.height - 46),
-        );
+        const height = Math.max(1, Math.floor(boxRect.height - 46));
 
         juliaContent.style.width = width + "px";
         juliaContent.style.height = height + "px";
@@ -933,7 +1047,7 @@
 
         setupDraggablePanel(juliaBox, juliaHeader);
 
-        // Minimize toggle
+        // Minimize toggle (optional if you add a button)
         if (juliaToggle) {
             juliaToggle.addEventListener("click", () => {
                 const minimized = juliaBox.classList.toggle("minimized");
@@ -991,6 +1105,9 @@
             setCursorStatus(world.cx, world.cy);
         }
 
+        // keep Julia cursor locked to world position as view pans/zooms
+        updateJuliaCursorScreenPosition();
+
         requestAnimationFrame(loop);
     }
 
@@ -1008,6 +1125,22 @@
 
         // Julia UI
         setupJuliaPanel();
+
+        // Julia cursor drag
+        setupJuliaCursorDrag();
+
+        // Default Julia cursor position:
+        // use explicit start value if configured, otherwise center of current view
+        const view = getCurrentView();
+        if (HAS_JULIA_START) {
+            juliaCursorWorldX = JULIA_CURSOR_START_RE;
+            juliaCursorWorldY = JULIA_CURSOR_START_IM;
+        } else {
+            juliaCursorWorldX = view.cx;
+            juliaCursorWorldY = view.cy;
+        }
+        updateJuliaCursorScreenPosition();
+        updateJuliaFromCursor();
 
         loop();
     }

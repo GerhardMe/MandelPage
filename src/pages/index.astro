@@ -36,13 +36,21 @@
                 </div>
             </div>
 
-            <!-- NEW: draggable, minimizable Julia canvas box -->
             <div id="juliaBox" class="colorChanger">
                 <div class="appHeader" id="juliaHeader">Julia set</div>
                 <div id="juliaContent">
                     <canvas id="juliaCanvas"></canvas>
                 </div>
                 <div id="juliaResizeHandle"></div>
+            </div>
+
+            <div id="juliaCursor" class="colorChanger">
+                <div class="ver">
+                    <div class="line"></div><div class="line"></div>
+                </div>
+                <div class="hor">
+                    <div class="line"></div><div class="line"></div>
+                </div>
             </div>
 
             <div id="statusBar">
@@ -56,218 +64,270 @@
                 </div>
             </div>
         </div>
-
-        <!-- Your existing JS lives in this file -->
-        <script is:inline src="/mandelbrot/mandel-main.js"></script>
     </body>
 
-    <style>
-        :root {
-            --app-margin: 16px; /* global scope */
-            --app-padding: 11px;
-        }
-        html,
-        body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background: #000;
-            color: #eee;
-            font-family: system-ui, sans-serif;
-            overflow: hidden;
-        }
+    <!-- Your existing JS lives in this file -->
+    <script is:inline src="/mandelbrot/mandel-main.js"></script>
+</html>
 
-        #app {
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
+<style>
+    html,
+    body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        color: #eee;
+        font-family: system-ui, sans-serif;
+        overflow: hidden;
 
-        #canvasWrapper {
-            position: relative;
-            flex: 1 1 auto;
-            overflow: hidden;
-        }
+        --app-margin: 16px; /* global scope */
+        --app-padding: 11px;
+        --translucent-bg: rgba(0, 0, 0, 0.75);
+    }
 
-        canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            touch-action: none;
-        }
+    #app {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
 
-        canvas:active {
-            cursor: grabbing;
-        }
+    #canvasWrapper {
+        position: relative;
+        flex: 1 1 auto;
+        overflow: hidden;
+    }
 
-        /* Palette / controls box */
-        #controls {
-            position: fixed;
-            top: var(--app-margin);
-            left: var(--app-margin);
-            padding: var(--app-padding);
-            background: rgba(0, 0, 0, 0.75);
-            border-radius: 2px;
-            border: 1px solid;
-            font-size: 12px;
-            z-index: 10;
-            user-select: none;
-            color: white !important;
-            min-width: 20em;
-        }
+    canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+    }
 
-        .appHeader {
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            cursor: grab;
-            margin: -1em -1em -1em -1em;
-            padding: 1em 1em 1em 1em;
-            height: 2.5em;
+    canvas:active {
+        cursor: grabbing;
+    }
 
-            color: white !important;
-        }
+    /* Palette / controls box */
+    #controls {
+        position: fixed;
+        top: var(--app-margin);
+        left: var(--app-margin);
+        padding: var(--app-padding);
+        background: var(--translucent-bg);
+        border-radius: 2px;
+        border: 1px solid;
+        font-size: 12px;
+        z-index: 10;
+        user-select: none;
+        color: white !important;
+        min-width: 20em;
+    }
 
-        .appHeader:active {
-            cursor: grabbing;
-        }
+    .appHeader {
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        cursor: grab;
+        margin: -1em -1em -1em -1em;
+        padding: 1em 1em 1em 1em;
+        height: 2.5em;
 
-        #controls .controls-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 4px;
-        }
+        color: white !important;
+    }
 
-        #controls label {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            margin: 0;
-        }
+    .appHeader:active {
+        cursor: grabbing;
+    }
 
-        #controls input[type="color"] {
-            width: 1.3em;
-            height: 1.3em;
-            padding: 0;
-            border-radius: 5px;
-            border: 0px;
-            background: #111;
-            margin-right: 0.5em;
-        }
+    #controls .controls-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+    }
 
-        #controls input[type="checkbox"] {
-            margin: 0;
-            appearance: checkbox;
-        }
+    #controls label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin: 0;
+    }
 
-        #controls input[type="range"] {
-            width: 80%;
-            margin: 2px 0 0 0;
-            appearance: auto;
-        }
+    #controls input[type="color"] {
+        width: 1.3em;
+        height: 1.3em;
+        padding: 0;
+        border-radius: 5px;
+        border: 0px;
+        background: #111;
+        margin-right: 0.5em;
+    }
 
-        /* Bottom status bar */
-        #statusBar {
-            flex: 0 0 auto;
-            height: 18px;
-            padding: 4px 8px;
-            background: #0c0c0c;
-            border-top: 1px solid #3a3a3a;
-            font-size: 11px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-                "Liberation Mono", "Courier New", monospace;
-            display: flex;
-            align-items: center;
-            white-space: nowrap;
-            overflow: hidden;
-            opacity: 0.8;
-            gap: 8px;
-        }
+    #controls input[type="checkbox"] {
+        margin: 0;
+        appearance: checkbox;
+    }
 
-        #gerhardLink {
-            cursor: pointer;
-            text-decoration: none;
-        }
+    #controls input[type="range"] {
+        width: 80%;
+        margin: 2px 0 0 0;
+        appearance: auto;
+    }
 
-        #gerhardLink:hover {
-            text-decoration: underline;
-        }
+    /* Bottom status bar */
+    #statusBar {
+        flex: 0 0 auto;
+        height: 18px;
+        padding: 4px 8px;
+        background: #0c0c0c;
+        border-top: 1px solid #3a3a3a;
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            "Liberation Mono", "Courier New", monospace;
+        display: flex;
+        align-items: center;
+        white-space: nowrap;
+        overflow: hidden;
+        opacity: 0.8;
+        gap: 8px;
+    }
 
-        #status {
-            flex: 1 1 auto;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        /* Julia box – visually like palette, but right side */
-        #juliaBox {
-            position: fixed;
-            top: var(--app-margin);
-            right: var(--app-margin);
-            padding: var(--app-padding);
-            background: rgba(0, 0, 0, 0.75); /* see-through box */
-            border-radius: 2px;
-            border: 1px solid;
-            font-size: 12px;
-            z-index: 11;
-            user-select: none;
-            width: 530px;
-            height: 410px;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-        }
+    #gerhardLink {
+        cursor: pointer;
+        text-decoration: none;
+    }
 
-        /* Content wraps the white canvas + resize handle */
-        #juliaContent {
-            position: relative;
-            flex: 1 1 auto;
-            margin-top: 6px;
-        }
+    #gerhardLink:hover {
+        text-decoration: underline;
+    }
 
-        /* Opaque white canvas inside transparent box */
-        #juliaCanvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            background: #ffffff;
-        }
+    #status {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Julia box – visually like palette, but right side */
+    #juliaBox {
+        position: fixed;
+        top: var(--app-margin);
+        right: var(--app-margin);
+        padding: var(--app-padding);
+        background: var(--translucent-bg);
+        border-radius: 2px;
+        border: 1px solid;
+        font-size: 12px;
+        z-index: 11;
+        user-select: none;
+        width: 530px;
+        height: 410px;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
 
-        /* Resize handle (bottom-right corner) */
-        #juliaResizeHandle {
+    /* Content wraps the white canvas + resize handle */
+    #juliaContent {
+        position: relative;
+        flex: 1 1 auto;
+        margin-top: 6px;
+    }
+
+    /* Opaque white canvas inside transparent box */
+    #juliaCanvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: #ffffff;
+    }
+
+    /* Resize handle (bottom-right corner) */
+    #juliaResizeHandle {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        right: 3px;
+        bottom: 3px;
+        cursor: se-resize;
+        box-sizing: border-box;
+        border-right: 1px solid;
+        border-bottom: 1px solid;
+    }
+
+    /* Minimized Julia: only header visible */
+    #juliaBox.minimized {
+        height: auto;
+    }
+
+    #juliaBox.minimized #juliaContent {
+        display: none;
+    }
+
+    /* POI / Julia-aim cursor */
+    #juliaCursor {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 61px;
+        height: 61px;
+        border-radius: 50%;
+        cursor: grab;
+        z-index: 5;
+        transform: translate(-50%, -50%);
+        background: var(--translucent-bg);
+
+        user-select: none !important;
+
+        div {
             position: absolute;
-            width: 12px;
-            height: 12px;
-            right: 3px;
-            bottom: 3px;
-            cursor: se-resize;
-            box-sizing: border-box;
-            border-right: 1px solid;
-            border-bottom: 1px solid;
+            justify-content: space-evenly;
+            width: calc(100% + 1px);
+            height: calc(100% + 1px);
         }
+        .ver {
+            display: flex;
+            flex-direction: column;
+            transform: translate(calc(50% - 1px));
 
-        /* Minimized Julia: only header visible */
-        #juliaBox.minimized {
-            height: auto;
-        }
-
-        #juliaBox.minimized #juliaContent {
-            display: none;
-        }
-
-        /* Neutralise any mobile/hi-DPI scaling from the Layout on this page */
-        @media (min-resolution: 2dppx),
-            (-webkit-min-device-pixel-ratio: 2),
-            (max-width: 900px) {
-            :global(html),
-            :global(body),
-            :global(main),
-            :global(#app) {
-                zoom: 1 !important;
-                transform: none !important;
-                font-size: 16px !important;
+            div {
+                border-left: 1px solid;
             }
         }
-    </style>
-</html>
+
+        .hor {
+            display: flex;
+            flex-direction: row;
+            transform: translate(0, calc(50% - 1px));
+
+            div {
+                border-top: 1px solid;
+            }
+        }
+
+        .line {
+            width: 45%;
+            height: 45%;
+            position: relative;
+        }
+    }
+
+    #juliaCursor:active {
+        cursor: grabbing;
+    }
+
+    /* Neutralise any mobile/hi-DPI scaling from the Layout on this page */
+    @media (min-resolution: 2dppx),
+        (-webkit-min-device-pixel-ratio: 2),
+        (max-width: 900px) {
+        :global(html),
+        :global(body),
+        :global(main),
+        :global(#app) {
+            zoom: 1 !important;
+            transform: none !important;
+            font-size: 16px !important;
+        }
+    }
+</style>
