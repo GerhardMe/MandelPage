@@ -1,74 +1,72 @@
-<html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="generator" content={Astro.generator} />
-        <link rel="icon" type="image/png+xml" href="/favicon.png" />
-    </head>
-    <body>
-        <div id="app">
-            <div id="canvasWrapper">
-                <canvas id="view"></canvas>
+---
+import Layout from "../layouts/main.astro";
+---
 
-                <div id="controls" class="colorChanger">
-                    <div class="appHeader" id="controlsHeader">Palette</div>
-                    <div class="controls-row">
-                        <label>
-                            Color
-                            <input type="color" id="fc" />
-                        </label>
-                        <label>
-                            <input type="checkbox" id="fillInside" />
-                            Fill interior
-                        </label>
-                    </div>
-                    <div class="controls-row">
-                        <label style="flex: 1 1 auto">
-                            Glow
-                            <input
-                                type="range"
-                                id="bw"
-                                min="0"
-                                max="100"
-                                value="80"
-                            />
-                        </label>
-                    </div>
-                </div>
-            </div>
+<Layout>
+    <div id="app">
+        <div id="canvasWrapper">
+            <canvas id="view"></canvas>
 
-            <div id="juliaBox" class="colorChanger">
-                <div class="appHeader" id="juliaHeader">Julia set</div>
-                <div id="juliaContent">
-                    <canvas id="juliaCanvas"></canvas>
+            <div id="controls" class="colorChanger">
+                <div class="appHeader" id="controlsHeader">Palette</div>
+                <div class="controls-row">
+                    <label>
+                        Color
+                        <input type="color" id="fc" />
+                    </label>
+                    <label>
+                        <input type="checkbox" id="fillInside" />
+                        Fill interior
+                    </label>
                 </div>
-                <div id="juliaResizeHandle"></div>
-            </div>
-
-            <div id="juliaCursor" class="colorChanger">
-                <div class="ver">
-                    <div class="line"></div><div class="line"></div>
-                </div>
-                <div class="hor">
-                    <div class="line"></div><div class="line"></div>
-                </div>
-            </div>
-
-            <div id="statusBar">
-                <div id="status">JS must be enabled for this site</div>
-                <div id="about">
-                    <a
-                        class="colorChanger"
-                        id="gerhardLink"
-                        href="https://gerhard.page">Built by Gerhard</a
-                    >
+                <div class="controls-row">
+                    <label style="flex: 1 1 auto">
+                        Glow
+                        <input
+                            type="range"
+                            id="bw"
+                            min="0"
+                            max="100"
+                            value="80"
+                        />
+                    </label>
                 </div>
             </div>
         </div>
-    </body>
 
-    <!-- Your existing JS lives in this file -->
-    <script is:inline src="/mandelbrot/mandel-main.js"></script>
-</html>
+        <div id="juliaBox" class="colorChanger">
+            <div class="appHeader" id="juliaHeader">Julia set</div>
+            <div id="juliaContent">
+                <canvas id="juliaCanvas"></canvas>
+                <div id="juliaCoordinates">Loading Julia-coordinates...</div>
+            </div>
+            <div id="juliaResizeHandle"></div>
+        </div>
+
+        <div id="juliaCursor" class="colorChanger">
+            <div class="ver">
+                <div class="line"></div><div class="line"></div>
+            </div>
+            <div class="hor">
+                <div class="line"></div><div class="line"></div>
+            </div>
+        </div>
+
+        <div id="statusBar">
+            <div id="status">JS must be enabled for this site</div>
+            <div id="about">
+                <a
+                    class="colorChanger"
+                    id="gerhardLink"
+                    href="https://gerhard.page">Built by Gerhard</a
+                >
+            </div>
+        </div>
+    </div>
+</Layout>
+
+<!-- Your existing JS lives in this file -->
+<script is:inline src="/mandelbrot/mandel-main.js"></script>
 
 <style>
     html,
@@ -133,7 +131,7 @@
         cursor: grab;
         margin: -1em -1em -1em -1em;
         padding: 1em 1em 1em 1em;
-        height: 2.5em;
+        height: 4em;
 
         color: white !important;
     }
@@ -235,12 +233,19 @@
         margin-top: 6px;
     }
 
+    #juliaCoordinates {
+        color: white;
+        margin-top: 10px;
+        text-align: right;
+    }
+
     /* Opaque white canvas inside transparent box */
     #juliaCanvas {
         width: 100%;
         height: 100%;
         display: block;
         background: #ffffff;
+        border-radius: 2px;
     }
 
     /* Resize handle (bottom-right corner) */
@@ -270,8 +275,8 @@
         position: absolute;
         top: 0;
         left: 0;
-        width: 61px;
-        height: 61px;
+        width: 60px;
+        height: 60px;
         border-radius: 50%;
         cursor: grab;
         z-index: 5;
@@ -279,17 +284,18 @@
         background: var(--translucent-bg);
 
         user-select: none !important;
+        overflow: hidden;
 
         div {
             position: absolute;
             justify-content: space-evenly;
-            width: calc(100% + 1px);
-            height: calc(100% + 1px);
+            width: 100%;
+            height: 100%;
         }
         .ver {
             display: flex;
             flex-direction: column;
-            transform: translate(calc(50% - 1px));
+            transform: translate(50%);
 
             div {
                 border-left: 1px solid;
@@ -299,7 +305,7 @@
         .hor {
             display: flex;
             flex-direction: row;
-            transform: translate(0, calc(50% - 1px));
+            transform: translate(0, 50%);
 
             div {
                 border-top: 1px solid;
@@ -307,8 +313,8 @@
         }
 
         .line {
-            width: 45%;
-            height: 45%;
+            width: calc(50% - 5px);
+            height: calc(50% - 5px);
             position: relative;
         }
     }

@@ -26,6 +26,9 @@
     // Julia cursor (world-anchored, draggable)
     const juliaCursorEl = document.getElementById("juliaCursor");
 
+    // External coordinates display
+    const juliaCoordinatesEl = document.getElementById("juliaCoordinates");
+
     if (fc) fc.value = "#00ffff";
 
     // ------------------ status ------------------
@@ -33,7 +36,6 @@
     const status = {
         render: "WASM worker loading…",
         cursor: "",
-        juliaCursor: "",        // *** NEW ***
         zoom: "",
         error: "",
     };
@@ -44,7 +46,7 @@
         if (status.zoom) parts.push(status.zoom);
         if (status.error) parts.push(status.error);
         if (status.cursor) parts.push(status.cursor);
-        if (status.juliaCursor) parts.push(status.juliaCursor); // *** NEW ***
+        if (status.juliaCursor) parts.push(status.juliaCursor);
         statusEl.textContent = parts.join(" | ");
     }
 
@@ -76,7 +78,13 @@
         const re = cx.toFixed(16);
         const imAbs = Math.abs(cy).toFixed(16);
         const sign = cy >= 0 ? "+" : "-";
-        status.juliaCursor = `julia-set: ${re} ${sign} ${imAbs}i`;
+        const text = `${re} ${sign} ${imAbs}i`;
+
+        // update external DOM element
+        if (juliaCoordinatesEl) {
+            juliaCoordinatesEl.textContent = "Julia-set: " + text;
+        }
+
         updateStatus();
     }
 
@@ -166,9 +174,9 @@
     let juliaCursorWorldY = null;
     let juliaCursorDragging = false;
 
-    // Set these to your preferred default c = a + bi
-    const JULIA_CURSOR_START_RE = -0.75;
-    const JULIA_CURSOR_START_IM = 0;
+    // Default Julia c value
+    const JULIA_CURSOR_START_RE = -0.5125;
+    const JULIA_CURSOR_START_IM = 0.5213;
     const HAS_JULIA_START =
         Number.isFinite(JULIA_CURSOR_START_RE) &&
         Number.isFinite(JULIA_CURSOR_START_IM);
@@ -482,11 +490,9 @@
         tmp.height = fullH;
         const tctx = tmp.getContext("2d");
 
-        // apply current interactive transform to base into tmp
         tctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
         tctx.drawImage(baseCanvas, 0, 0);
 
-        // copy back to baseCanvas at identity
         baseCtx.setTransform(1, 0, 0, 1, 0, 0);
         baseCtx.clearRect(0, 0, fullW, fullH);
         baseCtx.drawImage(tmp, 0, 0);
@@ -494,17 +500,14 @@
     }
 
     function commitVisualAndReset() {
-        const view = getCurrentView(); // uses current viewScale/offset
+        const view = getCurrentView();
 
-        // bake the zoomed/panned image into base as a quick preview
         bakeTransformIntoBase();
 
-        // commit world view
         centerX = view.cx;
         centerY = view.cy;
         zoom = view.zoom;
 
-        // reset interactive transform
         viewScale = 1;
         viewOffsetX = 0;
         viewOffsetY = 0;
@@ -519,6 +522,7 @@
         if (!juliaCursorEl || juliaCursorWorldX == null || juliaCursorWorldY == null) return;
         const { sx, sy } = worldToScreen(juliaCursorWorldX, juliaCursorWorldY);
         juliaCursorEl.style.display = "block";
+        // (sx, sy) is the CENTER of the circle; CSS keeps it centered
         juliaCursorEl.style.transform =
             `translate(${sx}px, ${sy}px) translate(-50%, -50%)`;
     }
@@ -526,8 +530,24 @@
     function setJuliaCursorFromClient(clientX, clientY) {
         if (!canvas) return;
         const rect = canvas.getBoundingClientRect();
-        const sx = clientX - rect.left;
-        const sy = clientY - rect.top;
+        let sx = clientX - rect.left;
+        let sy = clientY - rect.top;
+
+        // Interpret the pointer as being on the bottom-right of the cursor circle.
+        // Convert that to the circle's center by subtracting half width/height.
+
+        if (juliaCursorEl) {
+            const w = juliaCursorEl.offsetWidth || 0;
+            const h = juliaCursorEl.offsetHeight || 0;
+
+            // interpret pointer as being at (fractionX, fractionY) of the box,
+            // and convert to center coordinates
+            const dx = (0.7 - 0.5) * w;
+            const dy = (0.7 - 0.5) * h;
+            sx -= dx;
+            sy -= dy;
+        }
+
         const world = screenToWorld(sx, sy);
         juliaCursorWorldX = world.cx;
         juliaCursorWorldY = world.cy;
@@ -539,8 +559,8 @@
         if (juliaCursorWorldX == null || juliaCursorWorldY == null) return;
         if (!juliaCanvas) return;
 
-        // report Julia cursor world position like the regular cursor
-        setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY); // *** NEW ***
+        // report Julia cursor world position
+        setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY);
 
         // hook up your Julia rendering here
         // e.g., post to a worker:
@@ -670,7 +690,6 @@
     });
 
     canvas.addEventListener("pointerleave", () => {
-        // stop updating status, but keep last text
         cursorScreenX = null;
         cursorScreenY = null;
     });
@@ -699,32 +718,30 @@
     canvas.addEventListener("pointerup", endPan);
     canvas.addEventListener("pointercancel", endPan);
 
-    canvas.addEventListener(
-        "wheel",
-        (e) => {
-            e.preventDefault();
+    function handleWheel(e) {
+        e.preventDefault();
 
-            const rect = canvas.getBoundingClientRect();
-            const sx = e.clientX - rect.left;
-            const sy = e.clientY - rect.top;
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
 
-            cursorScreenX = sx;
-            cursorScreenY = sy;
+        cursorScreenX = sx;
+        cursorScreenY = sy;
 
-            const worldBefore = screenToWorld(sx, sy);
+        const worldBefore = screenToWorld(sx, sy);
 
-            const delta = -e.deltaY;
-            const zoomFactor = Math.exp(delta * 0.001);
-            viewScale = (viewScale || 1) * zoomFactor;
+        const zoomFactor = Math.exp(-e.deltaY * 0.001);
+        viewScale = (viewScale || 1) * zoomFactor;
 
-            lockWorldPointToScreen(worldBefore.cx, worldBefore.cy, sx, sy);
+        lockWorldPointToScreen(worldBefore.cx, worldBefore.cy, sx, sy);
 
-            setZoomStatus();
-            redrawFromBase();
-            markInteraction();
-        },
-        { passive: false },
-    );
+        setZoomStatus();
+        redrawFromBase();
+        markInteraction();
+    }
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    juliaCursorEl.addEventListener("wheel", handleWheel, { passive: false });
 
     // ------------------ palette controls ------------------
 
@@ -876,7 +893,6 @@
 
         redrawFullColored(lastGray, fbW, fbH);
 
-        // fold view into base world
         centerX = view.cx;
         centerY = view.cy;
         zoom = view.zoom;
@@ -1030,7 +1046,7 @@
         const boxRect = juliaBox.getBoundingClientRect();
 
         const width = Math.max(1, Math.floor(boxRect.width) - 24);
-        const height = Math.max(1, Math.floor(boxRect.height - 46));
+        const height = Math.max(1, Math.floor(boxRect.height - 46 - 30));
 
         juliaContent.style.width = width + "px";
         juliaContent.style.height = height + "px";
@@ -1047,7 +1063,6 @@
 
         setupDraggablePanel(juliaBox, juliaHeader);
 
-        // Minimize toggle (optional if you add a button)
         if (juliaToggle) {
             juliaToggle.addEventListener("click", () => {
                 const minimized = juliaBox.classList.toggle("minimized");
@@ -1058,7 +1073,6 @@
             });
         }
 
-        // Resize behavior
         setupResizablePanel(
             juliaBox,
             juliaResizeHandle,
@@ -1067,7 +1081,6 @@
             syncJuliaCanvasSize,
         );
 
-        // Initial size / placeholder
         requestAnimationFrame(() => {
             syncJuliaCanvasSize();
             const jctx = juliaCanvas.getContext("2d");
@@ -1130,7 +1143,6 @@
         setupJuliaCursorDrag();
 
         // Default Julia cursor position:
-        // use explicit start value if configured, otherwise center of current view
         const view = getCurrentView();
         if (HAS_JULIA_START) {
             juliaCursorWorldX = JULIA_CURSOR_START_RE;
