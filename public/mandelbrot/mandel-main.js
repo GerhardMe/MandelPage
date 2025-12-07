@@ -68,7 +68,7 @@
         }
         const re = cx.toFixed(16);
         const imAbs = Math.abs(cy).toFixed(16);
-        const sign = cy >= 0 ? "+" : "-";
+        const sign = cy >= 0 ? "-" : "+";
         status.cursor = `cursor: ${re} ${sign} ${imAbs}i`;
         updateStatus();
     }
@@ -77,7 +77,7 @@
         if (cx == null || cy == null) return;
         const re = cx.toFixed(16);
         const imAbs = Math.abs(cy).toFixed(16);
-        const sign = cy >= 0 ? "+" : "-";
+        const sign = cy >= 0 ? "-" : "+";
         const text = `${re} ${sign} ${imAbs}i`;
 
         // update external DOM element
@@ -176,7 +176,7 @@
 
     // Default Julia c value
     const JULIA_CURSOR_START_RE = -0.5125;
-    const JULIA_CURSOR_START_IM = 0.5213;
+    const JULIA_CURSOR_START_IM = -0.5213;
     const HAS_JULIA_START =
         Number.isFinite(JULIA_CURSOR_START_RE) &&
         Number.isFinite(JULIA_CURSOR_START_IM);
