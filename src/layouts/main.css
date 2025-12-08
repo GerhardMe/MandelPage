@@ -1,3 +1,15 @@
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    color: #eee;
+    font-family: "sans", "Courier New", Courier, monospace;
+    overflow: hidden;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -60,6 +72,13 @@ input[type="range"] {
         place-self: center;
     }
 }
+
+:root {
+    --app-margin: 16px;
+    --app-padding: 11px;
+    --translucent-bg: rgba(0, 0, 0, 0.75);
+}
+
 
 @font-face {
     font-family: "Fira Sans";
