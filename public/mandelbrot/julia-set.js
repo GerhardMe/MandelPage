@@ -12,6 +12,19 @@ const HAS_JULIA_START =
     Number.isFinite(JULIA_CURSOR_START_RE) &&
     Number.isFinite(JULIA_CURSOR_START_IM);
 
+// ------------------ Julia view pan/zoom state ------------------
+
+let juliaViewZoom = 1;          // 1 = fit canvas
+let juliaViewOffsetX = 0;       // pan offset in canvas pixels
+let juliaViewOffsetY = 0;
+let juliaPanning = false;
+let juliaPanLastX = 0;
+let juliaPanLastY = 0;
+let juliaPanZoomInitialized = false;
+
+// offscreen buffer for Julia image (so we can pan/zoom without re-rendering)
+let lastJuliaOffscreen = null;
+
 // ------------------ worker state: Julia GPU ------------------
 
 let juliaWorker = null;
@@ -123,6 +136,128 @@ function setupJuliaCursorDrag() {
     juliaCursorEl.addEventListener("pointercancel", endDrag);
 }
 
+// ------------------ Julia pan/zoom helpers ------------------
+
+function drawJuliaView() {
+    if (!juliaCanvas) return;
+    const jctx = juliaCanvas.getContext("2d");
+    if (!jctx) return;
+    if (!lastJuliaOffscreen) return;
+
+    const outW = juliaCanvas.width;
+    const outH = juliaCanvas.height;
+
+    jctx.save();
+    jctx.setTransform(1, 0, 0, 1, 0, 0);
+    jctx.clearRect(0, 0, outW, outH);
+
+    const z = juliaViewZoom;
+    const destW = outW * z;
+    const destH = outH * z;
+    const destX = (outW - destW) / 2 + juliaViewOffsetX;
+    const destY = (outH - destH) / 2 + juliaViewOffsetY;
+
+    jctx.drawImage(
+        lastJuliaOffscreen,
+        0,
+        0,
+        lastJuliaFbW,
+        lastJuliaFbH,
+        destX,
+        destY,
+        destW,
+        destH,
+    );
+
+    jctx.restore();
+}
+
+function zoomJuliaAt(canvasX, canvasY, zoomFactor) {
+    if (!juliaCanvas) return;
+    if (!lastJuliaOffscreen) return;
+
+    const outW = juliaCanvas.width;
+    const outH = juliaCanvas.height;
+
+    const z = juliaViewZoom;
+
+    // clamp zoom range
+    let newZ = z * zoomFactor;
+    newZ = Math.max(0.25, Math.min(20, newZ));
+
+    const destW = outW * z;
+    const destH = outH * z;
+    const destX = (outW - destW) / 2 + juliaViewOffsetX;
+    const destY = (outH - destH) / 2 + juliaViewOffsetY;
+
+    // image-space coordinates under cursor before zoom
+    const uX = (canvasX - destX) / z;
+    const uY = (canvasY - destY) / z;
+
+    const newDestW = outW * newZ;
+    const newDestH = outH * newZ;
+    const newDestX = canvasX - uX * newZ;
+    const newDestY = canvasY - uY * newZ;
+
+    juliaViewZoom = newZ;
+    juliaViewOffsetX = newDestX - (outW - newDestW) / 2;
+    juliaViewOffsetY = newDestY - (outH - newDestH) / 2;
+
+    drawJuliaView();
+}
+
+function setupJuliaPanZoom() {
+    if (!juliaCanvas || juliaPanZoomInitialized) return;
+    juliaPanZoomInitialized = true;
+
+    juliaCanvas.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        juliaPanning = true;
+        juliaPanLastX = e.clientX;
+        juliaPanLastY = e.clientY;
+        juliaCanvas.setPointerCapture(e.pointerId);
+    });
+
+    function endPan(e) {
+        if (!juliaPanning) return;
+        juliaPanning = false;
+        try {
+            juliaCanvas.releasePointerCapture(e.pointerId);
+        } catch (_) { }
+    }
+
+    juliaCanvas.addEventListener("pointermove", (e) => {
+        if (!juliaPanning) return;
+        const dx = e.clientX - juliaPanLastX;
+        const dy = e.clientY - juliaPanLastY;
+        juliaPanLastX = e.clientX;
+        juliaPanLastY = e.clientY;
+
+        juliaViewOffsetX += dx;
+        juliaViewOffsetY += dy;
+
+        drawJuliaView();
+    });
+
+    juliaCanvas.addEventListener("pointerup", endPan);
+    juliaCanvas.addEventListener("pointercancel", endPan);
+
+    juliaCanvas.addEventListener(
+        "wheel",
+        (e) => {
+            e.preventDefault();
+            const rect = juliaCanvas.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+
+            const delta = -e.deltaY;
+            const zoomFactor = Math.exp(delta * 0.001);
+            zoomJuliaAt(cx, cy, zoomFactor);
+        },
+        { passive: false },
+    );
+}
+
 // ---- Julia GPU worker integration ----
 
 function requestJuliaRender() {
@@ -199,21 +334,26 @@ function handleJuliaFrame(msg) {
     const colored = colorizeGray(grayArr);
     const img = new ImageData(colored, stageW, stageH);
 
-    const tmp = document.createElement("canvas");
-    tmp.width = stageW;
-    tmp.height = stageH;
-    const tctx = tmp.getContext("2d");
-    tctx.putImageData(img, 0, 0);
+    if (
+        !lastJuliaOffscreen ||
+        lastJuliaOffscreen.width !== stageW ||
+        lastJuliaOffscreen.height !== stageH
+    ) {
+        lastJuliaOffscreen = document.createElement("canvas");
+        lastJuliaOffscreen.width = stageW;
+        lastJuliaOffscreen.height = stageH;
+    }
 
-    const outW = juliaCanvas.width;
-    const outH = juliaCanvas.height;
-    jctx.clearRect(0, 0, outW, outH);
-    jctx.drawImage(tmp, 0, 0, stageW, stageH, 0, 0, outW, outH);
+    const tctx = lastJuliaOffscreen.getContext("2d");
+    tctx.putImageData(img, 0, 0);
 
     // remember last Julia gray for recolor
     lastJuliaGray = grayArr;
     lastJuliaFbW = stageW;
     lastJuliaFbH = stageH;
+
+    // draw with current pan/zoom
+    drawJuliaView();
 
     const havePending = !!juliaPendingRequest;
     const lastStageIndex = JULIA_STAGES.length - 1;
@@ -243,6 +383,9 @@ function handleJuliaFrame(msg) {
 
 function initJuliaWorker() {
     if (!juliaCanvas) return;
+
+    // set up pan/zoom once
+    setupJuliaPanZoom();
 
     juliaWorker = new Worker("/mandelbrot/julia-worker.js");
     juliaWorkerReady = false;
