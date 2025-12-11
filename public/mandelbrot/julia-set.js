@@ -34,7 +34,7 @@ let juliaPanZoomInitialized = false;
 // Interaction state: keep UI responsive while dragging/zooming
 let juliaInteractionActive = false;
 let juliaInteractionTimeout = null;
-const JULIA_INTERACTION_SETTLE_MS = 140; // after last input, commit + rerender
+const JULIA_INTERACTION_SETTLE_MS = 70; // after last input, commit + rerender
 
 // Offscreen buffer for Julia image
 let lastJuliaOffscreen = null;
@@ -44,7 +44,6 @@ let lastJuliaOffscreen = null;
 let lastJuliaCanvasW = 0;
 let lastJuliaCanvasH = 0;
 
-
 // ------------------ worker state: Julia GPU ------------------
 
 let juliaWorker = null;
@@ -52,9 +51,10 @@ let juliaWorkerReady = false;
 let juliaNextJobId = 1;
 let juliaCurrentJobId = null;
 
-// multi-stage preview (low-res first, then full-res 1:1)
-const JULIA_STAGES = [4, 2, 0.25];
-let juliaStageIndex = -1;
+// multi-stage preview (low-res first, then full-res, then supersample)
+const JULIA_STAGES = [4, 2, 1, 0.25];
+// stage index is ALWAYS in [0 .. JULIA_STAGES.length - 1] when a job is active
+let juliaStageIndex = 0;
 
 // single in-flight job + at most one pending job
 let juliaJobInFlight = false;
@@ -64,7 +64,21 @@ let juliaActiveParams = null;     // params for the currently running job
 // Render scheduling throttle: avoid starting a job on every tiny move
 let juliaRenderScheduled = false;
 
+// Cancel current Julia job locally (worker keeps running, but results are ignored)
+function cancelJuliaJob() {
+    juliaJobInFlight = false;
+    juliaActiveParams = null;
+    juliaCurrentJobId = null;
+    juliaStageIndex = 0; // keep a valid index, never -1
+}
+
 // ------------------ Julia world-rect helpers ------------------
+
+// Assumes these globals exist somewhere in your full file:
+//   const juliaCanvas = document.getElementById("juliaCanvas");
+//   const canvas, fc, bw, fillInside, juliaCursorEl, juliaBox
+//   worldToScreen, screenToWorld, hexToRgb, colorizeGray,
+//   setJuliaCursorStatus, updateJuliaFromCursor, setErrorStatus, etc.
 
 function syncJuliaCanvasSizeAndWorld() {
     if (!juliaCanvas) return;
@@ -120,14 +134,12 @@ function syncJuliaCanvasSizeAndWorld() {
     requestJuliaRender();
 }
 
-
 function initJuliaViewRect() {
     // Initial world rect is already set to a 3.0 vertical span.
     // This call snaps the horizontal span to the canvas aspect,
     // sets DPR-aware width/height, and triggers an initial render.
     syncJuliaCanvasSizeAndWorld();
 }
-
 
 // map canvas pixel -> Julia-world using current world rect (no screen transform)
 function canvasToJuliaWorld(cx, cy) {
@@ -273,6 +285,9 @@ function touchJuliaInteraction() {
         juliaInteractionActive = false;
         juliaInteractionTimeout = null;
 
+        // Kill any old job for the previous view
+        cancelJuliaJob();
+
         // Pan/zoom during interaction only manipulates screen transform.
         // When interaction settles, bake transform into world rect,
         // reset screen transform, and trigger a staged re-render.
@@ -282,39 +297,35 @@ function touchJuliaInteraction() {
 }
 
 // Commit current screen transform (scale+offset) into the world-rect.
+// Simplified and independent of framebuffer resolution, so it cooperates
+// with both coarse and supersampled stages.
 function commitJuliaScreenTransformToWorld() {
-    if (!juliaCanvas || !lastJuliaOffscreen) return;
+    if (!juliaCanvas) return;
 
     const canvasW = juliaCanvas.width || 1;
     const canvasH = juliaCanvas.height || 1;
 
-    const baseW = lastJuliaFbW || canvasW;
-    const baseH = lastJuliaFbH || canvasH;
-
     const spanX = juliaWorldXMax - juliaWorldXMin;
     const spanY = juliaWorldYMax - juliaWorldYMin;
 
-    // Canvas x=0 maps to baseX0 in the underlying image
-    const baseX0 = (0 - juliaScreenOffsetX) / juliaScreenScale;
-    const baseX1 = (canvasW - juliaScreenOffsetX) / juliaScreenScale;
+    const s = juliaScreenScale || 1;
 
-    const baseY0 = (0 - juliaScreenOffsetY) / juliaScreenScale;
-    const baseY1 = (canvasH - juliaScreenOffsetY) / juliaScreenScale;
+    // Screen (0,0) -> world
+    const x0 = juliaWorldXMin +
+        ((0 - juliaScreenOffsetX) / (s * canvasW)) * spanX;
+    const y0 = juliaWorldYMin +
+        ((0 - juliaScreenOffsetY) / (s * canvasH)) * spanY;
 
-    const tx0 = baseX0 / baseW;
-    const tx1 = baseX1 / baseW;
-    const ty0 = baseY0 / baseH;
-    const ty1 = baseY1 / baseH;
+    // Screen (canvasW, canvasH) -> world
+    const x1 = juliaWorldXMin +
+        ((canvasW - juliaScreenOffsetX) / (s * canvasW)) * spanX;
+    const y1 = juliaWorldYMin +
+        ((canvasH - juliaScreenOffsetY) / (s * canvasH)) * spanY;
 
-    const newXMin = juliaWorldXMin + tx0 * spanX;
-    const newXMax = juliaWorldXMin + tx1 * spanX;
-    const newYMin = juliaWorldYMin + ty0 * spanY;
-    const newYMax = juliaWorldYMin + ty1 * spanY;
-
-    juliaWorldXMin = newXMin;
-    juliaWorldXMax = newXMax;
-    juliaWorldYMin = newYMin;
-    juliaWorldYMax = newYMax;
+    juliaWorldXMin = x0;
+    juliaWorldXMax = x1;
+    juliaWorldYMin = y0;
+    juliaWorldYMax = y1;
 
     // Reset screen transform; new render will be 1:1 for the new world rect
     juliaScreenScale = 1;
@@ -494,7 +505,7 @@ function startJuliaJobFromPending() {
 
     const jobId = juliaNextJobId++;
     juliaCurrentJobId = jobId;
-    juliaStageIndex = 0;
+    juliaStageIndex = 0;        // always start at stage 0
     juliaJobInFlight = true;
     juliaActiveParams = params;
 
@@ -505,11 +516,13 @@ function sendJuliaStage(jobId, params) {
     if (!juliaWorkerReady) return;
     if (!juliaCanvas) return;
     if (!params) return;
-    if (juliaStageIndex < 0 || juliaStageIndex >= JULIA_STAGES.length) return;
 
-    const scale = JULIA_STAGES[juliaStageIndex];
+    // stage index is guaranteed valid (0..length-1)
+    const stageIdx = juliaStageIndex;
+    if (stageIdx < 0 || stageIdx >= JULIA_STAGES.length) return;
 
-    // Stage scale is "coarseness": 4 -> quarter-res, 2 -> half, 1 -> full.
+    const scale = JULIA_STAGES[stageIdx];
+
     const fbW = Math.max(1, Math.floor(params.outW / scale));
     const fbH = Math.max(1, Math.floor(params.outH / scale));
 
@@ -569,25 +582,29 @@ function handleJuliaFrame(msg) {
     const havePending = !!juliaPendingRequest;
 
     // During interaction, just show the first coarse stage for responsiveness.
+    // Otherwise, run through all stages up to the last one.
     const lastStageIndex = juliaInteractionActive
         ? 0
         : (JULIA_STAGES.length - 1);
 
+    // If a newer request exists, abandon this job and start the latest one.
     if (havePending) {
         juliaJobInFlight = false;
-        juliaStageIndex = -1;
+        juliaActiveParams = null;
+        // stageIndex will be reset to 0 when the new job starts
         startJuliaJobFromPending();
         return;
     }
 
-    if (juliaStageIndex >= 0 && juliaStageIndex < lastStageIndex) {
+    // No pending request -> either advance stage or finish job
+    if (juliaStageIndex < lastStageIndex) {
         juliaStageIndex++;
         sendJuliaStage(jobId, juliaActiveParams);
     } else {
+        // Finished final stage for this view
         juliaJobInFlight = false;
-        juliaStageIndex = -1;
         juliaActiveParams = null;
-
+        // stage index can stay at lastStageIndex; next job will reset to 0
         if (juliaPendingRequest) {
             startJuliaJobFromPending();
         }
@@ -615,7 +632,7 @@ function initJuliaWorker() {
     juliaJobInFlight = false;
     juliaPendingRequest = null;
     juliaActiveParams = null;
-    juliaStageIndex = -1;
+    juliaStageIndex = 0;
     juliaCurrentJobId = null;
 
     juliaWorker.onmessage = (e) => {
