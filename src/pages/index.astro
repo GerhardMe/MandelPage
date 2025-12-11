@@ -6,41 +6,38 @@ import "./style.css";
 <Layout>
     <div id="app">
         <div id="canvasWrapper">
+            <div id="info" class="minimized"></div>
             <canvas id="view"></canvas>
+        </div>
 
-            <div id="controls" class="appWindow colorChanger">
-                <div id="controlsHeader" class="appHeader">
-                    <span class="appTitle">Palette</span>
-                    <button class="appMinimize colorChanger" type="button"
-                        >─</button
-                    >
+        <div id="controls" class="appWindow colorChanger">
+            <div id="controlsHeader" class="appHeader">
+                <span class="appTitle">Options</span>
+                <button class="appMinimize colorChanger" type="button">─</button
+                >
+            </div>
+
+            <div class="appBody" id="controlsContent">
+                <div class="row">
+                    <label>
+                        Color <input type="color" id="fc" />
+                    </label>
+                    <label>
+                        Fill interior <input type="checkbox" id="fillInside" />
+                    </label>
                 </div>
 
-                <div class="appBody" id="controlsContent">
-                    <div class="row">
-                        <label>
-                            Color <input type="color" id="fc" />
-                        </label>
-                        <label>
-                            Fill interior <input
-                                type="checkbox"
-                                id="fillInside"
-                            />
-                        </label>
-                    </div>
-
-                    <div class="row">
-                        <label class="flex">
-                            Glow
-                            <input
-                                type="range"
-                                id="bw"
-                                min="0"
-                                max="100"
-                                value="80"
-                            />
-                        </label>
-                    </div>
+                <div class="row">
+                    <label class="flex">
+                        Glow
+                        <input
+                            type="range"
+                            id="bw"
+                            min="0"
+                            max="100"
+                            value="80"
+                        />
+                    </label>
                 </div>
             </div>
         </div>
@@ -72,19 +69,19 @@ import "./style.css";
         <div id="statusBar" class="statusBar">
             <div id="status"></div>
 
-            <div class="statusApps">
-                <div id="statusPalette" class="toggleBtn">
-                    <span>Palette</span>
+            <div class="right">
+                <div id="OptionsBtn" class="toggleBtn">
+                    <span>Options</span>
                 </div>
+
                 <span>|</span>
-                <div id="statusJulia" class="toggleBtn">
+
+                <div id="JuliaBtn" class="toggleBtn">
                     <span>Julia set</span>
                 </div>
-            </div>
 
-            <span>|</span>
+                <span>|</span>
 
-            <div id="about">
                 <a
                     id="gerhardLink"
                     class="colorChanger link"
@@ -92,11 +89,13 @@ import "./style.css";
                 >
                     Built by Gerhard
                 </a>
+
+                <span>|</span>
+
+                <div id="infoBtn" class="toggleBtn colorChanger">
+                    <span>?</span>
+                </div>
             </div>
-
-            <span>|</span>
-
-            <button class="statusItem" type="button">?</button>
         </div>
     </div>
 </Layout>

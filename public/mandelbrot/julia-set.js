@@ -12,18 +12,38 @@ const HAS_JULIA_START =
     Number.isFinite(JULIA_CURSOR_START_RE) &&
     Number.isFinite(JULIA_CURSOR_START_IM);
 
-// ------------------ Julia view pan/zoom state ------------------
+// ------------------ Julia view: world-rect for zoom/pan ------------------
 
-let juliaViewZoom = 1;          // 1 = fit canvas
-let juliaViewOffsetX = 0;       // pan offset in canvas pixels
-let juliaViewOffsetY = 0;
+// World rectangle currently shown in the Julia canvas
+let juliaWorldXMin = -1.5;
+let juliaWorldXMax = 1.5;
+let juliaWorldYMin = -1.5;
+let juliaWorldYMax = 1.5;
+
+// Screen-space transform used only for responsive pan/zoom of last image.
+// This does NOT change the world rect until we "commit" after interaction.
+let juliaScreenScale = 1;
+let juliaScreenOffsetX = 0;
+let juliaScreenOffsetY = 0;
+
 let juliaPanning = false;
 let juliaPanLastX = 0;
 let juliaPanLastY = 0;
 let juliaPanZoomInitialized = false;
 
-// offscreen buffer for Julia image (so we can pan/zoom without re-rendering)
+// Interaction state: keep UI responsive while dragging/zooming
+let juliaInteractionActive = false;
+let juliaInteractionTimeout = null;
+const JULIA_INTERACTION_SETTLE_MS = 140; // after last input, commit + rerender
+
+// Offscreen buffer for Julia image
 let lastJuliaOffscreen = null;
+
+// ------------------ Julia canvas size / aspect tracking ------------------
+
+let lastJuliaCanvasW = 0;
+let lastJuliaCanvasH = 0;
+
 
 // ------------------ worker state: Julia GPU ------------------
 
@@ -32,8 +52,8 @@ let juliaWorkerReady = false;
 let juliaNextJobId = 1;
 let juliaCurrentJobId = null;
 
-// multi-stage preview (low-res first, then full-res)
-const JULIA_STAGES = [4, 1, 0.25]; // scale factors: 4x coarse, then full-res
+// multi-stage preview (low-res first, then full-res 1:1)
+const JULIA_STAGES = [4, 2, 0.25];
 let juliaStageIndex = -1;
 
 // single in-flight job + at most one pending job
@@ -41,7 +61,105 @@ let juliaJobInFlight = false;
 let juliaPendingRequest = null;   // latest requested params while a job is running
 let juliaActiveParams = null;     // params for the currently running job
 
-// ------------------ helpers for Julia ------------------
+// Render scheduling throttle: avoid starting a job on every tiny move
+let juliaRenderScheduled = false;
+
+// ------------------ Julia world-rect helpers ------------------
+
+function syncJuliaCanvasSizeAndWorld() {
+    if (!juliaCanvas) return;
+
+    const rect = juliaCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const newW = Math.max(1, Math.round(rect.width * dpr));
+    const newH = Math.max(1, Math.round(rect.height * dpr));
+
+    // No change -> nothing to do
+    if (newW === lastJuliaCanvasW && newH === lastJuliaCanvasH) {
+        return;
+    }
+
+    const oldW = lastJuliaCanvasW || newW;
+    const oldH = lastJuliaCanvasH || newH;
+
+    lastJuliaCanvasW = newW;
+    lastJuliaCanvasH = newH;
+
+    // Set the real backing resolution so 1 Julia pixel == 1 canvas pixel
+    juliaCanvas.width = newW;
+    juliaCanvas.height = newH;
+
+    // --- keep vertical span, adjust horizontal span to match new aspect ---
+
+    const newAspect = newW / newH;
+
+    const currentSpanY = (juliaWorldYMax - juliaWorldYMin) || 3.0;
+    const centerX = 0.5 * (juliaWorldXMin + juliaWorldXMax) || 0;
+    const centerY = 0.5 * (juliaWorldYMin + juliaWorldYMax) || 0;
+
+    const newSpanX = currentSpanY * newAspect;
+
+    juliaWorldXMin = centerX - newSpanX / 2;
+    juliaWorldXMax = centerX + newSpanX / 2;
+    juliaWorldYMin = centerY - currentSpanY / 2;
+    juliaWorldYMax = centerY + currentSpanY / 2;
+
+    // Reset screen-space pan/zoom; world-rect now encodes the view
+    juliaScreenScale = 1;
+    juliaScreenOffsetX = 0;
+    juliaScreenOffsetY = 0;
+
+    // Drop any old offscreen buffer that had the wrong aspect/size
+    lastJuliaOffscreen = null;
+    lastJuliaFbW = 0;
+    lastJuliaFbH = 0;
+
+    // Force a fresh multi-stage render at the new resolution / aspect
+    requestJuliaRender();
+}
+
+
+function initJuliaViewRect() {
+    // Initial world rect is already set to a 3.0 vertical span.
+    // This call snaps the horizontal span to the canvas aspect,
+    // sets DPR-aware width/height, and triggers an initial render.
+    syncJuliaCanvasSizeAndWorld();
+}
+
+
+// map canvas pixel -> Julia-world using current world rect (no screen transform)
+function canvasToJuliaWorld(cx, cy) {
+    if (!juliaCanvas) {
+        return { x: 0, y: 0 };
+    }
+    const w = juliaCanvas.width || 1;
+    const h = juliaCanvas.height || 1;
+
+    const tx = cx / w; // 0..1
+    const ty = cy / h; // 0..1
+
+    const spanX = juliaWorldXMax - juliaWorldXMin;
+    const spanY = juliaWorldYMax - juliaWorldYMin;
+
+    const x = juliaWorldXMin + tx * spanX;
+    const y = juliaWorldYMin + ty * spanY;
+
+    return { x, y };
+}
+
+// expose current view rect for worker params
+function getJuliaViewRect() {
+    return {
+        xMin: juliaWorldXMin,
+        xMax: juliaWorldXMax,
+        yMin: juliaWorldYMin,
+        yMax: juliaWorldYMax,
+    };
+}
+
+// ------------------ helpers for Julia worker params ------------------
 
 function buildJuliaParams() {
     if (!juliaCanvas) return null;
@@ -56,14 +174,21 @@ function buildJuliaParams() {
     const colorHex = fc && fc.value ? fc.value : "#00ffff";
     const color = hexToRgb(colorHex);
 
+    const vr = getJuliaViewRect();
+
     return {
         outW,
         outH,
         cRe: juliaCursorWorldX,
         cIm: juliaCursorWorldY,
-        color,          // now ignored by worker, but kept for compatibility
-        raw,            // now ignored by worker
-        fillInterior: fillSnap, // now ignored by worker
+        color,          // ignored by worker, kept for API compat
+        raw,            // ignored
+        fillInterior: fillSnap, // ignored
+
+        viewXMin: vr.xMin,
+        viewXMax: vr.xMax,
+        viewYMin: vr.yMin,
+        viewYMax: vr.yMax,
     };
 }
 
@@ -74,8 +199,9 @@ function updateJuliaCursorScreenPosition() {
         !juliaCursorEl ||
         juliaCursorWorldX == null ||
         juliaCursorWorldY == null
-    )
+    ) {
         return;
+    }
 
     // if Julia box is minimized/hidden, don't bother
     if (juliaBox && juliaBox.classList.contains("minimized")) return;
@@ -124,7 +250,7 @@ function setupJuliaCursorDrag() {
         juliaCursorDragging = false;
         try {
             juliaCursorEl.releasePointerCapture(e.pointerId);
-        } catch (_) { }
+        } catch (_) { /* ignore */ }
     }
 
     window.addEventListener("pointermove", (e) => {
@@ -136,7 +262,67 @@ function setupJuliaCursorDrag() {
     juliaCursorEl.addEventListener("pointercancel", endDrag);
 }
 
-// ------------------ Julia pan/zoom helpers ------------------
+// ------------------ interaction timing ------------------
+
+function touchJuliaInteraction() {
+    juliaInteractionActive = true;
+    if (juliaInteractionTimeout !== null) {
+        clearTimeout(juliaInteractionTimeout);
+    }
+    juliaInteractionTimeout = setTimeout(() => {
+        juliaInteractionActive = false;
+        juliaInteractionTimeout = null;
+
+        // Pan/zoom during interaction only manipulates screen transform.
+        // When interaction settles, bake transform into world rect,
+        // reset screen transform, and trigger a staged re-render.
+        commitJuliaScreenTransformToWorld();
+        requestJuliaRender();
+    }, JULIA_INTERACTION_SETTLE_MS);
+}
+
+// Commit current screen transform (scale+offset) into the world-rect.
+function commitJuliaScreenTransformToWorld() {
+    if (!juliaCanvas || !lastJuliaOffscreen) return;
+
+    const canvasW = juliaCanvas.width || 1;
+    const canvasH = juliaCanvas.height || 1;
+
+    const baseW = lastJuliaFbW || canvasW;
+    const baseH = lastJuliaFbH || canvasH;
+
+    const spanX = juliaWorldXMax - juliaWorldXMin;
+    const spanY = juliaWorldYMax - juliaWorldYMin;
+
+    // Canvas x=0 maps to baseX0 in the underlying image
+    const baseX0 = (0 - juliaScreenOffsetX) / juliaScreenScale;
+    const baseX1 = (canvasW - juliaScreenOffsetX) / juliaScreenScale;
+
+    const baseY0 = (0 - juliaScreenOffsetY) / juliaScreenScale;
+    const baseY1 = (canvasH - juliaScreenOffsetY) / juliaScreenScale;
+
+    const tx0 = baseX0 / baseW;
+    const tx1 = baseX1 / baseW;
+    const ty0 = baseY0 / baseH;
+    const ty1 = baseY1 / baseH;
+
+    const newXMin = juliaWorldXMin + tx0 * spanX;
+    const newXMax = juliaWorldXMin + tx1 * spanX;
+    const newYMin = juliaWorldYMin + ty0 * spanY;
+    const newYMax = juliaWorldYMin + ty1 * spanY;
+
+    juliaWorldXMin = newXMin;
+    juliaWorldXMax = newXMax;
+    juliaWorldYMin = newYMin;
+    juliaWorldYMax = newYMax;
+
+    // Reset screen transform; new render will be 1:1 for the new world rect
+    juliaScreenScale = 1;
+    juliaScreenOffsetX = 0;
+    juliaScreenOffsetY = 0;
+}
+
+// ------------------ Julia pan/zoom: screen-transform only ------------------
 
 function drawJuliaView() {
     if (!juliaCanvas) return;
@@ -147,62 +333,74 @@ function drawJuliaView() {
     const outW = juliaCanvas.width;
     const outH = juliaCanvas.height;
 
+    const baseW = lastJuliaFbW || lastJuliaOffscreen.width || 1;
+    const baseH = lastJuliaFbH || lastJuliaOffscreen.height || 1;
+
     jctx.save();
     jctx.setTransform(1, 0, 0, 1, 0, 0);
     jctx.clearRect(0, 0, outW, outH);
 
-    const z = juliaViewZoom;
-    const destW = outW * z;
-    const destH = outH * z;
-    const destX = (outW - destW) / 2 + juliaViewOffsetX;
-    const destY = (outH - destH) / 2 + juliaViewOffsetY;
+    // Coarse stages should look blocky, not blurred.
+    jctx.imageSmoothingEnabled = false;
 
+    // Scale the offscreen buffer so it always covers the full canvas.
+    const scaleToCanvasX = outW / baseW;
+    const scaleToCanvasY = outH / baseH;
+
+    jctx.setTransform(
+        juliaScreenScale * scaleToCanvasX,
+        0,
+        0,
+        juliaScreenScale * scaleToCanvasY,
+        juliaScreenOffsetX,
+        juliaScreenOffsetY
+    );
+
+    // Draw the whole offscreen buffer at its native coordinate space (0..baseW, 0..baseH)
     jctx.drawImage(
         lastJuliaOffscreen,
         0,
         0,
-        lastJuliaFbW,
-        lastJuliaFbH,
-        destX,
-        destY,
-        destW,
-        destH,
+        baseW,
+        baseH
     );
 
     jctx.restore();
 }
 
+// Only modify screen transform; do NOT touch world rect here.
 function zoomJuliaAt(canvasX, canvasY, zoomFactor) {
     if (!juliaCanvas) return;
     if (!lastJuliaOffscreen) return;
 
-    const outW = juliaCanvas.width;
-    const outH = juliaCanvas.height;
+    const prevScale = juliaScreenScale;
+    let newScale = prevScale * zoomFactor;
 
-    const z = juliaViewZoom;
+    // Wide bounds to avoid NaNs but allow effectively arbitrary deep zoom.
+    const MIN_SCALE = 1e-6;
+    const MAX_SCALE = 1e6;
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
 
-    // clamp zoom range
-    let newZ = z * zoomFactor;
-    newZ = Math.max(0.25, Math.min(20, newZ));
+    // Keep the zoom anchor under the cursor.
+    juliaScreenOffsetX =
+        canvasX - (canvasX - juliaScreenOffsetX) * (newScale / prevScale);
+    juliaScreenOffsetY =
+        canvasY - (canvasY - juliaScreenOffsetY) * (newScale / prevScale);
 
-    const destW = outW * z;
-    const destH = outH * z;
-    const destX = (outW - destW) / 2 + juliaViewOffsetX;
-    const destY = (outH - destH) / 2 + juliaViewOffsetY;
+    juliaScreenScale = newScale;
 
-    // image-space coordinates under cursor before zoom
-    const uX = (canvasX - destX) / z;
-    const uY = (canvasY - destY) / z;
+    touchJuliaInteraction();
+    drawJuliaView();
+}
 
-    const newDestW = outW * newZ;
-    const newDestH = outH * newZ;
-    const newDestX = canvasX - uX * newZ;
-    const newDestY = canvasY - uY * newZ;
+// Only modify screen transform; do NOT touch world rect here.
+function panJuliaByPixels(dx, dy) {
+    if (!lastJuliaOffscreen) return;
 
-    juliaViewZoom = newZ;
-    juliaViewOffsetX = newDestX - (outW - newDestW) / 2;
-    juliaViewOffsetY = newDestY - (outH - newDestH) / 2;
+    juliaScreenOffsetX += dx;
+    juliaScreenOffsetY += dy;
 
+    touchJuliaInteraction();
     drawJuliaView();
 }
 
@@ -210,12 +408,16 @@ function setupJuliaPanZoom() {
     if (!juliaCanvas || juliaPanZoomInitialized) return;
     juliaPanZoomInitialized = true;
 
+    // Sync to current panel size before adding input handlers
+    syncJuliaCanvasSizeAndWorld();
+
     juliaCanvas.addEventListener("pointerdown", (e) => {
         if (e.button !== 0) return;
         juliaPanning = true;
         juliaPanLastX = e.clientX;
         juliaPanLastY = e.clientY;
         juliaCanvas.setPointerCapture(e.pointerId);
+        touchJuliaInteraction();
     });
 
     function endPan(e) {
@@ -223,7 +425,8 @@ function setupJuliaPanZoom() {
         juliaPanning = false;
         try {
             juliaCanvas.releasePointerCapture(e.pointerId);
-        } catch (_) { }
+        } catch (_) { /* ignore */ }
+        touchJuliaInteraction(); // settle timer handles commit+rerender
     }
 
     juliaCanvas.addEventListener("pointermove", (e) => {
@@ -233,10 +436,7 @@ function setupJuliaPanZoom() {
         juliaPanLastX = e.clientX;
         juliaPanLastY = e.clientY;
 
-        juliaViewOffsetX += dx;
-        juliaViewOffsetY += dy;
-
-        drawJuliaView();
+        panJuliaByPixels(dx, dy);
     });
 
     juliaCanvas.addEventListener("pointerup", endPan);
@@ -246,12 +446,15 @@ function setupJuliaPanZoom() {
         "wheel",
         (e) => {
             e.preventDefault();
+            if (!lastJuliaOffscreen) return;
+
             const rect = juliaCanvas.getBoundingClientRect();
             const cx = e.clientX - rect.left;
             const cy = e.clientY - rect.top;
 
             const delta = -e.deltaY;
             const zoomFactor = Math.exp(delta * 0.001);
+
             zoomJuliaAt(cx, cy, zoomFactor);
         },
         { passive: false },
@@ -266,12 +469,18 @@ function requestJuliaRender() {
     const params = buildJuliaParams();
     if (!params) return;
 
-    // Overwrite any previous pending request
+    // Overwrite any previous pending request with the latest view
     juliaPendingRequest = params;
 
-    // If nothing is in flight, start immediately
-    if (!juliaJobInFlight) {
-        startJuliaJobFromPending();
+    // Throttle job start to next animation frame
+    if (!juliaRenderScheduled) {
+        juliaRenderScheduled = true;
+        requestAnimationFrame(() => {
+            juliaRenderScheduled = false;
+            if (!juliaJobInFlight) {
+                startJuliaJobFromPending();
+            }
+        });
     }
 }
 
@@ -300,6 +509,7 @@ function sendJuliaStage(jobId, params) {
 
     const scale = JULIA_STAGES[juliaStageIndex];
 
+    // Stage scale is "coarseness": 4 -> quarter-res, 2 -> half, 1 -> full.
     const fbW = Math.max(1, Math.floor(params.outW / scale));
     const fbH = Math.max(1, Math.floor(params.outH / scale));
 
@@ -310,15 +520,19 @@ function sendJuliaStage(jobId, params) {
         fbH,
         cRe: params.cRe,
         cIm: params.cIm,
-        color: params.color,              // ignored by worker now
-        raw: params.raw,                  // ignored
-        fillInterior: params.fillInterior,// ignored
+        color: params.color,
+        raw: params.raw,
+        fillInterior: params.fillInterior,
         scale,
+        viewXMin: params.viewXMin,
+        viewXMax: params.viewXMax,
+        viewYMin: params.viewYMin,
+        viewYMax: params.viewYMax,
     });
 }
 
 function handleJuliaFrame(msg) {
-    const { jobId, fbW, fbH, gray, scale } = msg;
+    const { jobId, fbW, fbH, gray } = msg;
     if (juliaCurrentJobId === null || jobId !== juliaCurrentJobId) return;
     if (!juliaCanvas) return;
 
@@ -329,7 +543,6 @@ function handleJuliaFrame(msg) {
     const stageH = fbH | 0;
     if (!stageW || !stageH) return;
 
-    // incoming is grayscale; colorize with same function as Mandelbrot
     const grayArr = new Uint8Array(gray);
     const colored = colorizeGray(grayArr);
     const img = new ImageData(colored, stageW, stageH);
@@ -347,18 +560,19 @@ function handleJuliaFrame(msg) {
     const tctx = lastJuliaOffscreen.getContext("2d");
     tctx.putImageData(img, 0, 0);
 
-    // remember last Julia gray for recolor
     lastJuliaGray = grayArr;
     lastJuliaFbW = stageW;
     lastJuliaFbH = stageH;
 
-    // draw with current pan/zoom
     drawJuliaView();
 
     const havePending = !!juliaPendingRequest;
-    const lastStageIndex = JULIA_STAGES.length - 1;
 
-    // If there is a newer request waiting, do NOT render finer stages for this job.
+    // During interaction, just show the first coarse stage for responsiveness.
+    const lastStageIndex = juliaInteractionActive
+        ? 0
+        : (JULIA_STAGES.length - 1);
+
     if (havePending) {
         juliaJobInFlight = false;
         juliaStageIndex = -1;
@@ -366,7 +580,6 @@ function handleJuliaFrame(msg) {
         return;
     }
 
-    // No pending request -> continue with stages or finish
     if (juliaStageIndex >= 0 && juliaStageIndex < lastStageIndex) {
         juliaStageIndex++;
         sendJuliaStage(jobId, juliaActiveParams);
@@ -384,7 +597,17 @@ function handleJuliaFrame(msg) {
 function initJuliaWorker() {
     if (!juliaCanvas) return;
 
-    // set up pan/zoom once
+    // Make sure the canvas backing size tracks CSS size + DPR
+    syncJuliaCanvasSizeAndWorld();
+
+    // React to panel resizes / drag-resizes
+    if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+            syncJuliaCanvasSizeAndWorld();
+        });
+        ro.observe(juliaCanvas);
+    }
+
     setupJuliaPanZoom();
 
     juliaWorker = new Worker("/mandelbrot/julia-worker.js");
@@ -400,7 +623,6 @@ function initJuliaWorker() {
         switch (msg.type) {
             case "ready":
                 juliaWorkerReady = true;
-                // Kick off an initial render once ready
                 requestJuliaRender();
                 break;
             case "frame":
@@ -425,6 +647,7 @@ function updateJuliaFromCursor() {
 
     setJuliaCursorStatus(juliaCursorWorldX, juliaCursorWorldY);
 
-    // trigger Julia GPU worker render
+    // For cursor movement we still trigger a render;
+    // pan/zoom responsiveness is handled purely in screen space now.
     requestJuliaRender();
 }

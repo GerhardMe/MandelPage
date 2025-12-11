@@ -5,12 +5,17 @@
 //     {
 //       type: "render",
 //       jobId,
-//       fbW, fbH,        // *stage* resolution
+//       fbW, fbH,        // framebuffer resolution
 //       cRe, cIm,        // Julia parameter
-//       color: { r, g, b }, // IGNORED (kept for compatibility)
-//       raw,             // IGNORED (0..100, bandwidth slider)
-//       fillInterior,    // IGNORED (0/1)
-//       scale            // stage scale factor (4, 1, ...), just echoed back
+//       color, raw,      // IGNORED (kept for compatibility)
+//       fillInterior,    // IGNORED
+//       scale,           // stage scale factor (4, 1, ...), just echoed back
+//
+//       // Optional world rect for subrenders / zoom:
+//       // If provided, worker maps pixel -> complex via this rect.
+//       // If omitted, worker uses the old symmetric view around 0.
+//       viewXMin, viewXMax,
+//       viewYMin, viewYMax,
 //     }
 //
 //   worker -> main (GRAYSCALE ONLY):
@@ -38,6 +43,7 @@ let posBuffer = null;
 let aPositionLoc = -1;
 let uResolutionLoc = null;
 let uCParamLoc = null;
+let uViewRectLoc = null; // xMin, xMax, yMin, yMax
 
 // Vertex shader: fullscreen quad
 const VS_SOURCE = `#version 300 es
@@ -50,6 +56,8 @@ void main() {
 `;
 
 // Fragment shader: Julia set, outputs *linear grayscale* in 0..1
+// If u_viewRect encodes a proper rect (xMin < xMax), we use it.
+// Otherwise we fall back to the old symmetric framing.
 const FS_SOURCE = `#version 300 es
 precision highp float;
 
@@ -58,18 +66,34 @@ out vec4 outColor;
 
 uniform vec2 u_resolution;
 uniform vec2 u_c;           // (cRe, cIm)
+uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
 
 const int maxIter = ${MAX_ITER};
 const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
 
 void main() {
-    float aspect = u_resolution.x / u_resolution.y;
-    float scale = 1.5;
+    vec2 z;
 
-    float x = (v_uv.x - 0.5) * 2.0 * scale * aspect;
-    float y = (v_uv.y - 0.5) * 2.0 * scale;
+    // Detect whether we have a valid view rect
+    bool hasView =
+        (u_viewRect.x < u_viewRect.y) &&
+        (u_viewRect.z < u_viewRect.w);
 
-    vec2 z = vec2(x, y);
+    if (hasView) {
+        // Map v_uv in [0,1]^2 into [xMin,xMax] x [yMin,yMax]
+        float x = mix(u_viewRect.x, u_viewRect.y, v_uv.x);
+        float y = mix(u_viewRect.z, u_viewRect.w, v_uv.y);
+        z = vec2(x, y);
+    } else {
+        // Legacy symmetric framing around 0 with fixed scale
+        float aspect = u_resolution.x / u_resolution.y;
+        float scale = 1.5;
+
+        float x = (v_uv.x - 0.5) * 2.0 * scale * aspect;
+        float y = (v_uv.y - 0.5) * 2.0 * scale;
+        z = vec2(x, y);
+    }
+
     vec2 c = u_c;
 
     float escapeIter = float(maxIter);
@@ -87,7 +111,6 @@ void main() {
         }
     }
 
-    // Interior = did not escape in maxIter
     bool isInterior = !escaped;
 
     // Normalized escape value: 1.0 for interior, [0,1) otherwise
@@ -170,6 +193,7 @@ function initGL(width, height) {
         aPositionLoc = gl.getAttribLocation(program, "a_position");
         uResolutionLoc = gl.getUniformLocation(program, "u_resolution");
         uCParamLoc = gl.getUniformLocation(program, "u_c");
+        uViewRectLoc = gl.getUniformLocation(program, "u_viewRect");
 
         posBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
@@ -193,12 +217,14 @@ function initGL(width, height) {
         aPositionLoc = -1;
         uResolutionLoc = null;
         uCParamLoc = null;
+        uViewRectLoc = null;
         return false;
     }
 }
 
 // WebGL path: returns Uint8Array(gray) length = fbW*fbH
-function renderJuliaWebGL(fbW, fbH, cRe, cIm) {
+// viewRect may be null OR { xMin, xMax, yMin, yMax }.
+function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
     if (!initGL(fbW, fbH)) {
         return null;
     }
@@ -216,6 +242,23 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm) {
     gl.uniform2f(uResolutionLoc, fbW, fbH);
     gl.uniform2f(uCParamLoc, cRe, cIm);
 
+    if (viewRect &&
+        Number.isFinite(viewRect.xMin) &&
+        Number.isFinite(viewRect.xMax) &&
+        Number.isFinite(viewRect.yMin) &&
+        Number.isFinite(viewRect.yMax)) {
+        gl.uniform4f(
+            uViewRectLoc,
+            viewRect.xMin,
+            viewRect.xMax,
+            viewRect.yMin,
+            viewRect.yMax,
+        );
+    } else {
+        // Invalid/missing rect: signal "no view" to shader
+        gl.uniform4f(uViewRectLoc, 0.0, 0.0, 0.0, 0.0);
+    }
+
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
     const rgba = new Uint8Array(fbW * fbH * 4);
@@ -230,23 +273,38 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm) {
     return gray;
 }
 
-// ------------- CPU fallback: pure grayscale -------------
+// ------------- CPU fallback: pure grayscale with optional view rect -------------
 
-function renderJuliaCPU(fbW, fbH, cRe, cIm) {
+// viewRect may be null OR { xMin, xMax, yMin, yMax }
+function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
     const gray = new Uint8Array(fbW * fbH);
 
+    const hasView =
+        viewRect &&
+        Number.isFinite(viewRect.xMin) &&
+        Number.isFinite(viewRect.xMax) &&
+        Number.isFinite(viewRect.yMin) &&
+        Number.isFinite(viewRect.yMax) &&
+        viewRect.xMin < viewRect.xMax &&
+        viewRect.yMin < viewRect.yMax;
+
     const aspect = fbW / fbH;
-    const scale = 1.5;
+    const baseScale = 1.5;
     const maxIter = MAX_ITER;
+
+    const spanX = hasView ? (viewRect.xMax - viewRect.xMin) : 2 * baseScale * aspect;
+    const spanY = hasView ? (viewRect.yMax - viewRect.yMin) : 2 * baseScale;
+    const xMin = hasView ? viewRect.xMin : -spanX / 2;
+    const yMin = hasView ? viewRect.yMin : -spanY / 2;
 
     let idx = 0;
     for (let j = 0; j < fbH; j++) {
-        const v = fbH > 1 ? j / (fbH - 1) : 0.5;
-        const y0 = (v - 0.5) * 2 * scale;
+        const v = fbH > 1 ? (j + 0.5) / fbH : 0.5;
+        const y0 = yMin + v * spanY;
 
         for (let i = 0; i < fbW; i++) {
-            const u = fbW > 1 ? i / (fbW - 1) : 0.5;
-            const x0 = (u - 0.5) * 2 * scale * aspect;
+            const u = fbW > 1 ? (i + 0.5) / fbW : 0.5;
+            const x0 = xMin + u * spanX;
 
             let zr = x0;
             let zi = y0;
@@ -290,17 +348,37 @@ self.onmessage = (e) => {
         fbH,
         cRe,
         cIm,
-        // color, raw, fillInterior, // now ignored, but accepted
-        scale,
+        scale, // just echoed back
+
+        // optional subrender rect:
+        viewXMin,
+        viewXMax,
+        viewYMin,
+        viewYMax,
     } = msg;
+
+    const w = fbW | 0;
+    const h = fbH | 0;
+    if (!w || !h) return;
+
+    const viewRect =
+        viewXMin == null || viewXMax == null || viewYMin == null || viewYMax == null
+            ? null
+            : {
+                xMin: +viewXMin,
+                xMax: +viewXMax,
+                yMin: +viewYMin,
+                yMax: +viewYMax,
+            };
 
     let gray = null;
     try {
         gray = renderJuliaWebGL(
-            fbW | 0,
-            fbH | 0,
+            w,
+            h,
             +cRe,
             +cIm,
+            viewRect,
         );
     } catch (_) {
         gray = null;
@@ -309,10 +387,11 @@ self.onmessage = (e) => {
     if (!gray) {
         try {
             gray = renderJuliaCPU(
-                fbW | 0,
-                fbH | 0,
+                w,
+                h,
                 +cRe,
                 +cIm,
+                viewRect,
             );
         } catch (err) {
             self.postMessage({
@@ -327,8 +406,8 @@ self.onmessage = (e) => {
         {
             type: "frame",
             jobId,
-            fbW,
-            fbH,
+            fbW: w,
+            fbH: h,
             scale,
             gray: gray.buffer,
         },
