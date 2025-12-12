@@ -52,7 +52,7 @@ let juliaNextJobId = 1;
 let juliaCurrentJobId = null;
 
 // multi-stage preview (low-res first, then full-res, then supersample)
-const JULIA_STAGES = [4, 2, 1, 0.25];
+const JULIA_STAGES = [2, 1, 0.25];
 // stage index is ALWAYS in [0 .. JULIA_STAGES.length - 1] when a job is active
 let juliaStageIndex = 0;
 
@@ -553,8 +553,9 @@ function sendJuliaStage(jobId, params) {
 
     const scale = JULIA_STAGES[stageIdx];
 
-    const fbW = Math.max(1, Math.floor(params.outW / scale));
-    const fbH = Math.max(1, Math.floor(params.outH / scale));
+    const effectiveScale = Math.max(1, scale);
+    const fbW = Math.max(1, Math.floor(params.outW / effectiveScale));
+    const fbH = Math.max(1, Math.floor(params.outH / effectiveScale));
 
     juliaWorker.postMessage({
         type: "render",

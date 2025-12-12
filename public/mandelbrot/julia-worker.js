@@ -1,55 +1,12 @@
-// /mandelbrot/julia-worker.js
-//
-// Protocol:
-//   main -> worker:
-//     {
-//       type: "render",
-//       jobId,
-//       fbW, fbH,        // framebuffer resolution
-//       cRe, cIm,        // Julia parameter
-//       color, raw,      // IGNORED (kept for compatibility)
-//       fillInterior,    // IGNORED
-//       scale,           // stage scale factor (4, 1, ...), just echoed back
-//
-//       // Optional world rect for subrenders / zoom:
-//       // If provided, worker maps pixel -> complex via this rect.
-//       // If omitted, worker uses the old symmetric view around 0.
-//       viewXMin, viewXMax,
-//       viewYMin, viewYMax,
-//
-//       // Optional grayscale mode:
-//       //   false / omitted -> absolute grayscale (default behavior)
-//       //   true           -> relative grayscale (max contrast)
-//       relativeGray,
-//     }
-//
-//   worker -> main (GRAYSCALE ONLY):
-//     { type: "frame", jobId, fbW, fbH, scale, gray: ArrayBuffer }
-//
-//   worker -> main (STATUS):
-//     { type: "status", jobId, backend, grayscale }
-//
-// Semantics (absolute mode):
-//   gray[i] in [0..255]
-//   - 0   = fast escape
-//   - 255 = interior (did not escape in MAX_ITER)
-//   - intermediate = linear in escape iteration
-//
-// Semantics (relative mode):
-//   - Start from the absolute gray buffer.
-//   - Let interior pixels be those with gray == 255 from the iteration logic.
-//   - Among non-interior pixels, find minGray and maxGray.
-//   - If minGray < maxGray:
-//       remap each non-interior pixel linearly so minGray -> 0, maxGray -> 255.
-//     Interior pixels remain 255.
-//   - If there are no non-interior pixels or range is degenerate, fall back
-//     to the absolute buffer (no change).
-
 "use strict";
 
 const MAX_ITER = 300;
 const BAILOUT_RADIUS = 4.0;
 const BAILOUT_SQ = BAILOUT_RADIUS * BAILOUT_RADIUS;
+
+// Supersample limits (scale < 1 path)
+const MAX_SUPERSAMPLE_FACTOR = 6;          // cap 1/scale -> factor
+const MAX_UPSAMPLE_PIXELS = 10_000_000;    // cap internal render size
 
 // ------------- WebGL state -------------
 
@@ -64,7 +21,6 @@ let uResolutionLoc = null;
 let uCParamLoc = null;
 let uViewRectLoc = null; // xMin, xMax, yMin, yMax
 
-// Vertex shader: fullscreen quad (WebGL2)
 const VS_SOURCE_WEBGL2 = `#version 300 es
 in vec2 a_position;
 out vec2 v_uv;
@@ -74,7 +30,6 @@ void main() {
 }
 `;
 
-// Fragment shader: Julia set, outputs *linear grayscale* in 0..1 (WebGL2)
 const FS_SOURCE_WEBGL2 = `#version 300 es
 precision highp float;
 
@@ -131,7 +86,6 @@ void main() {
 }
 `;
 
-// Vertex shader: fullscreen quad (WebGL1)
 const VS_SOURCE_WEBGL1 = `
 attribute vec2 a_position;
 varying vec2 v_uv;
@@ -141,8 +95,6 @@ void main() {
 }
 `;
 
-// Fragment shader: Julia set, outputs *linear grayscale* in 0..1 (WebGL1)
-// All int->float conversions are explicit to satisfy GLSL ES 1.00.
 const FS_SOURCE_WEBGL1 = `
 precision highp float;
 
@@ -186,7 +138,7 @@ void main() {
 
         if (!escaped && dot(z, z) > bailoutSq) {
             escaped = true;
-            escapeIter = float(i);  // explicit cast
+            escapeIter = float(i);
             break;
         }
     }
@@ -202,14 +154,11 @@ void main() {
 // ------------- WebGL helpers -------------
 
 function createGLContext(width, height) {
-    if (typeof OffscreenCanvas === "undefined") {
-        return null;
-    }
+    if (typeof OffscreenCanvas === "undefined") return null;
 
     try {
         glCanvas = new OffscreenCanvas(width, height);
 
-        // Try WebGL2 first.
         let ctx = glCanvas.getContext("webgl2", {
             premultipliedAlpha: false,
             preserveDrawingBuffer: false,
@@ -221,7 +170,6 @@ function createGLContext(width, height) {
             return gl;
         }
 
-        // Fallback to WebGL1.
         ctx = glCanvas.getContext("webgl", {
             premultipliedAlpha: false,
             preserveDrawingBuffer: false,
@@ -236,7 +184,7 @@ function createGLContext(width, height) {
         gl = ctx;
         isWebGL2 = false;
         return gl;
-    } catch (err) {
+    } catch {
         glCanvas = null;
         gl = null;
         return null;
@@ -247,8 +195,7 @@ function compileShader(type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
-    const ok = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-    if (!ok) {
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
         const info = gl.getShaderInfoLog(shader) || "shader compile error";
         gl.deleteShader(shader);
         throw new Error(info);
@@ -261,8 +208,7 @@ function safeLinkProgram(vs, fs) {
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
-    const ok = gl.getProgramParameter(prog, gl.LINK_STATUS);
-    if (!ok) {
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
         const info = gl.getProgramInfoLog(prog) || "program link error";
         gl.deleteProgram(prog);
         throw new Error(info);
@@ -298,13 +244,11 @@ function initGL(width, height) {
 
         posBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-        const verts = new Float32Array([
-            -1, -1,
-            1, -1,
-            -1, 1,
-            1, 1,
-        ]);
-        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+        gl.bufferData(
+            gl.ARRAY_BUFFER,
+            new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+            gl.STATIC_DRAW,
+        );
 
         gl.viewport(0, 0, width, height);
         gl.disable(gl.DEPTH_TEST);
@@ -313,7 +257,8 @@ function initGL(width, height) {
     } catch (err) {
         self.postMessage({
             type: "error",
-            message: "Julia WebGL init failed: " +
+            message:
+                "Julia WebGL init failed: " +
                 (err && err.message ? err.message : String(err)),
         });
 
@@ -329,16 +274,13 @@ function initGL(width, height) {
     }
 }
 
-// WebGL path: returns Uint8Array(gray) length = fbW*fbH.
-// viewRect may be null OR { xMin, xMax, yMin, yMax }.
-function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
-    if (!initGL(fbW, fbH)) {
-        return null;
-    }
+// WebGL render: returns Uint8Array length = w*h (grayscale 0..255)
+function renderJuliaWebGL(w, h, cRe, cIm, viewRect) {
+    if (!initGL(w, h)) return null;
 
-    glCanvas.width = fbW;
-    glCanvas.height = fbH;
-    gl.viewport(0, 0, fbW, fbH);
+    glCanvas.width = w;
+    glCanvas.height = h;
+    gl.viewport(0, 0, w, h);
 
     gl.useProgram(program);
 
@@ -346,14 +288,16 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
     gl.enableVertexAttribArray(aPositionLoc);
     gl.vertexAttribPointer(aPositionLoc, 2, gl.FLOAT, false, 0, 0);
 
-    gl.uniform2f(uResolutionLoc, fbW, fbH);
+    gl.uniform2f(uResolutionLoc, w, h);
     gl.uniform2f(uCParamLoc, cRe, cIm);
 
-    if (viewRect &&
+    if (
+        viewRect &&
         Number.isFinite(viewRect.xMin) &&
         Number.isFinite(viewRect.xMax) &&
         Number.isFinite(viewRect.yMin) &&
-        Number.isFinite(viewRect.yMax)) {
+        Number.isFinite(viewRect.yMax)
+    ) {
         gl.uniform4f(
             uViewRectLoc,
             viewRect.xMin,
@@ -362,29 +306,25 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
             viewRect.yMax,
         );
     } else {
-        // Invalid/missing rect: signal "no view" to shader.
         gl.uniform4f(uViewRectLoc, 0.0, 0.0, 0.0, 0.0);
     }
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-    const rgba = new Uint8Array(fbW * fbH * 4);
-    gl.readPixels(0, 0, fbW, fbH, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    const rgba = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
 
-    const gray = new Uint8Array(fbW * fbH);
-    let gi = 0;
-    for (let i = 0; i < rgba.length; i += 4) {
-        gray[gi++] = rgba[i]; // R channel; all channels are equal.
+    const gray = new Uint8Array(w * h);
+    for (let i = 0, gi = 0; i < rgba.length; i += 4) {
+        gray[gi++] = rgba[i];
     }
-
     return gray;
 }
 
-// ------------- CPU fallback: pure grayscale with optional view rect -------------
+// ------------- CPU fallback -------------
 
-// viewRect may be null OR { xMin, xMax, yMin, yMax }
-function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
-    const gray = new Uint8Array(fbW * fbH);
+function renderJuliaCPU(w, h, cRe, cIm, viewRect) {
+    const gray = new Uint8Array(w * h);
 
     const hasView =
         viewRect &&
@@ -395,30 +335,29 @@ function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
         viewRect.xMin < viewRect.xMax &&
         viewRect.yMin < viewRect.yMax;
 
-    const aspect = fbW / fbH;
+    const aspect = w / h;
     const baseScale = 1.5;
-    const maxIter = MAX_ITER;
 
-    const spanX = hasView ? (viewRect.xMax - viewRect.xMin) : 2 * baseScale * aspect;
-    const spanY = hasView ? (viewRect.yMax - viewRect.yMin) : 2 * baseScale;
+    const spanX = hasView ? viewRect.xMax - viewRect.xMin : 2 * baseScale * aspect;
+    const spanY = hasView ? viewRect.yMax - viewRect.yMin : 2 * baseScale;
     const xMin = hasView ? viewRect.xMin : -spanX / 2;
     const yMin = hasView ? viewRect.yMin : -spanY / 2;
 
     let idx = 0;
-    for (let j = 0; j < fbH; j++) {
-        const v = fbH > 1 ? (j + 0.5) / fbH : 0.5;
+    for (let j = 0; j < h; j++) {
+        const v = h > 1 ? (j + 0.5) / h : 0.5;
         const y0 = yMin + v * spanY;
 
-        for (let i = 0; i < fbW; i++) {
-            const u = fbW > 1 ? (i + 0.5) / fbW : 0.5;
+        for (let i = 0; i < w; i++) {
+            const u = w > 1 ? (i + 0.5) / w : 0.5;
             const x0 = xMin + u * spanX;
 
             let zr = x0;
             let zi = y0;
-            let escapeIter = maxIter;
+            let escapeIter = MAX_ITER;
             let escaped = false;
 
-            for (let it = 0; it < maxIter; it++) {
+            for (let it = 0; it < MAX_ITER; it++) {
                 const zr2 = zr * zr - zi * zi + cRe;
                 const zi2 = 2 * zr * zi + cIm;
                 zr = zr2;
@@ -431,23 +370,46 @@ function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
                 }
             }
 
-            const isInterior = !escaped;
-            const gNorm = isInterior ? 1 : escapeIter / maxIter;
-            const gClamped = gNorm <= 0 ? 0 : gNorm >= 1 ? 1 : gNorm;
-            gray[idx++] = Math.round(gClamped * 255);
+            const gNorm = escaped ? escapeIter / MAX_ITER : 1;
+            const g = gNorm <= 0 ? 0 : gNorm >= 1 ? 1 : gNorm;
+            gray[idx++] = (g * 255 + 0.5) | 0;
         }
     }
 
     return gray;
 }
 
+// ------------- Downsample (box filter) -------------
+
+function downsampleBox(grayUp, upW, upH, outW, outH, factor) {
+    // Assumes upW == outW*factor and upH == outH*factor
+    const out = new Uint8Array(outW * outH);
+    const area = factor * factor;
+
+    let oi = 0;
+    for (let y = 0; y < outH; y++) {
+        const y0 = y * factor;
+        for (let x = 0; x < outW; x++) {
+            const x0 = x * factor;
+
+            let sum = 0;
+            for (let dy = 0; dy < factor; dy++) {
+                let row = (y0 + dy) * upW + x0;
+                for (let dx = 0; dx < factor; dx++) {
+                    sum += grayUp[row + dx];
+                }
+            }
+
+            out[oi++] = (sum / area + 0.5) | 0;
+        }
+    }
+    return out;
+}
+
 // ------------- Relative grayscale post-processing -------------
 
-// Modifies gray in-place.
-// Returns true if remapping was applied, false if skipped (e.g. degenerate range).
 function applyRelativeGrayscale(gray) {
     const len = gray.length;
-
     let minVal = 255;
     let maxVal = 0;
 
@@ -464,15 +426,32 @@ function applyRelativeGrayscale(gray) {
 
     for (let i = 0; i < len; i++) {
         const v = gray[i];
-        if (v === 255) continue; // preserve interior
+        if (v === 255) continue;
         const t = (v - minVal) / range;
-        let g = Math.round(t * 255);
+        let g = (t * 255 + 0.5) | 0;
         if (g < 0) g = 0;
         else if (g > 255) g = 255;
         gray[i] = g;
     }
 
     return true;
+}
+
+// ------------- Scale semantics -------------
+
+function computeSupersampleFactor(scale, outW, outH) {
+    if (!(scale > 0) || scale >= 1) return 1;
+
+    // requested factor ~ 1/scale, but clamp
+    let f = Math.round(1 / scale);
+    if (f < 1) f = 1;
+    if (f > MAX_SUPERSAMPLE_FACTOR) f = MAX_SUPERSAMPLE_FACTOR;
+
+    // cap by absolute pixel budget
+    while (f > 1 && (outW * f) * (outH * f) > MAX_UPSAMPLE_PIXELS) {
+        f--;
+    }
+    return f < 1 ? 1 : f;
 }
 
 // ------------- Worker protocol -------------
@@ -489,62 +468,50 @@ self.onmessage = (e) => {
         fbH,
         cRe,
         cIm,
-        scale, // just echoed back
+        scale, // stage scale factor, now also used for supersample if < 1
 
-        // optional subrender rect:
         viewXMin,
         viewXMax,
         viewYMin,
         viewYMax,
 
-        // optional grayscale mode:
         relativeGray,
     } = msg;
 
-    const w = fbW | 0;
-    const h = fbH | 0;
-    if (!w || !h) return;
+    const outW = fbW | 0;
+    const outH = fbH | 0;
+    if (!outW || !outH) return;
 
     const viewRect =
         viewXMin == null || viewXMax == null || viewYMin == null || viewYMax == null
             ? null
-            : {
-                xMin: +viewXMin,
-                xMax: +viewXMax,
-                yMin: +viewYMin,
-                yMax: +viewYMax,
-            };
+            : { xMin: +viewXMin, xMax: +viewXMax, yMin: +viewYMin, yMax: +viewYMax };
 
-    let gray = null;
+    // Legacy: scale >= 1 means "render exactly fbW x fbH".
+    // New: scale < 1 means "internally supersample, then downsample back to fbW x fbH".
+    const ssFactor = computeSupersampleFactor(+scale, outW, outH);
+    const upW = outW * ssFactor;
+    const upH = outH * ssFactor;
+
+    let grayUp = null;
     let backend = "gpu";
 
     try {
-        gray = renderJuliaWebGL(
-            w,
-            h,
-            +cRe,
-            +cIm,
-            viewRect,
-        );
+        grayUp = renderJuliaWebGL(upW, upH, +cRe, +cIm, viewRect);
     } catch (err) {
         self.postMessage({
             type: "error",
-            message: "Julia WebGL render error: " +
+            message:
+                "Julia WebGL render error: " +
                 (err && err.message ? err.message : String(err)),
         });
-        gray = null;
+        grayUp = null;
     }
 
-    if (!gray) {
+    if (!grayUp) {
         backend = "cpu";
         try {
-            gray = renderJuliaCPU(
-                w,
-                h,
-                +cRe,
-                +cIm,
-                viewRect,
-            );
+            grayUp = renderJuliaCPU(upW, upH, +cRe, +cIm, viewRect);
         } catch (err) {
             self.postMessage({
                 type: "error",
@@ -554,20 +521,23 @@ self.onmessage = (e) => {
         }
     }
 
+    // Downsample if supersampled
+    let gray = grayUp;
+    if (ssFactor > 1) {
+        gray = downsampleBox(grayUp, upW, upH, outW, outH, ssFactor);
+    }
+
+    // Relative grayscale after final resolution is known
     const useRelative = !!relativeGray;
     let grayscaleMode = "absolute";
-
     if (useRelative) {
-        const applied = applyRelativeGrayscale(gray);
-        if (applied) {
-            grayscaleMode = "relative";
-        }
+        if (applyRelativeGrayscale(gray)) grayscaleMode = "relative";
     }
 
     self.postMessage({
         type: "status",
         jobId,
-        backend,               // "gpu" or "cpu"
+        backend, // "gpu" or "cpu"
         grayscale: grayscaleMode,
     });
 
@@ -575,8 +545,8 @@ self.onmessage = (e) => {
         {
             type: "frame",
             jobId,
-            fbW: w,
-            fbH: h,
+            fbW: outW,
+            fbH: outH,
             scale,
             gray: gray.buffer,
         },
