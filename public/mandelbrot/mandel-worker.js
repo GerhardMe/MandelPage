@@ -33,22 +33,25 @@ Module.onRuntimeInitialized = function () {
         "number", // yStart
         "number", // yEnd
         "number", // fillInterior
+        "number", // maxIter
     ]);
 
     // Fallback: full frame
     if (typeof renderRows !== "function") {
         const renderFrame = Module.cwrap("render_frame", null, [
-            "number",
-            "number",
-            "number",
-            "number",
-            "number",
+            "number", // cx
+            "number", // cy
+            "number", // zoom
+            "number", // scale
+            "number", // fillInterior
+            "number", // maxIter
         ]);
-        renderRows = function (cx, cy, zoom, scale, yStart, yEnd, fillInterior) {
+        renderRows = function (cx, cy, zoom, scale, yStart, yEnd, fillInterior, maxIter) {
             // ignore yStart/yEnd, full frame render
-            renderFrame(cx, cy, zoom, scale, fillInterior | 0);
+            renderFrame(cx, cy, zoom, scale, fillInterior | 0, maxIter | 0);
         };
     }
+
 
     wasmReady = true;
     postMessage({ type: "ready" });
@@ -171,6 +174,7 @@ function renderNextChunk() {
         startRow,
         endRow,
         job.fillInterior | 0,
+        job.maxIter | 0,
     );
 
     const t1 = (typeof performance !== "undefined"
@@ -267,6 +271,7 @@ self.onmessage = function (e) {
             zoom,
             scale,
             fillInterior,
+            maxIter,
         } = msg;
 
         const job = {
@@ -278,6 +283,7 @@ self.onmessage = function (e) {
             zoom,
             scale,
             fillInterior: fillInterior | 0,
+            maxIter: (maxIter | 0),
             _nextRow: 0,
             rowsPerChunk: 0,
         };

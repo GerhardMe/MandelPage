@@ -16,6 +16,7 @@ const mandelGlow = document.getElementById("mandelGlow");
 const juliaGlow = document.getElementById("juliaGlow");
 const relativeJulia = document.getElementById("relativeJulia");
 const juliaIterations = document.getElementById("juliaIterations");
+const mandelIterations = document.getElementById("mandelIterations");
 const getCursor = document.getElementById("get");
 
 const fillInside = document.getElementById("fillInside");
@@ -439,6 +440,13 @@ if (getCursor) {
         const h = Math.round(canvas.getBoundingClientRect().height / 2);
 
         setJuliaCursorFromClient(w, h)
+    });
+}
+
+if (mandelIterations) {
+    mandelIterations.addEventListener("change", () => {
+        markInteraction();     // cancels current job + resets stages
+        requestFullRender();   // restarts pipeline
     });
 }
 

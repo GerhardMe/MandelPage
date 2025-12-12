@@ -65,6 +65,13 @@ function requestFullRender() {
     setErrorStatus("");
 }
 
+function getMandelMaxIter() {
+    const v = mandelIterations ? Number(mandelIterations.value) : 200;
+    const it = Number.isFinite(v) ? (v | 0) : 200;
+    return it > 0 ? it : 200;
+}
+
+
 // ------------------ canvas pointer / touch ------------------
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -227,6 +234,7 @@ function startWorkerJob(stageIndex) {
 
     const view = getCurrentView();
     const fillSnap = fillInterior | 0;
+    const maxIter = getMandelMaxIter(); // NEW
 
     worker.postMessage({
         type: "render",
@@ -238,12 +246,14 @@ function startWorkerJob(stageIndex) {
         zoom: view.zoom,
         scale,
         fillInterior: fillSnap,
+        maxIter, // NEW
     });
 
     setRenderStatus(
-        `render: stage ${stageIndex + 1}/${STAGES.length} scale=${scale}`,
+        `render: stage ${stageIndex + 1}/${STAGES.length} scale=${scale} iter=${maxIter}`,
     );
 }
+
 
 function handleWorkerScan(msg) {
     const { jobId, fbW, fbH, yStart, yEnd } = msg;

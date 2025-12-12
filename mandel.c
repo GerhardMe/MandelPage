@@ -35,9 +35,7 @@ static int in_cardioid_or_bulb(double x, double y)
     double dx2 = x + 1.0;
     double dy2 = yabs;
     if (dx2 * dx2 + dy2 * dy2 < 0.0625)
-    {
         return 1;
-    }
 
     double dx = x - 0.25;
     double q = dx * dx + yabs * yabs;
@@ -49,9 +47,7 @@ static double mandel(double cx, double cy, int maxIter)
     double ay = (cy >= 0.0) ? cy : -cy;
 
     if (in_cardioid_or_bulb(cx, ay))
-    {
-        return maxIter;
-    }
+        return (double)maxIter;
 
     double x = 0.0, y = 0.0;
     double xx = 0.0, yy = 0.0;
@@ -67,37 +63,10 @@ static double mandel(double cx, double cy, int maxIter)
     }
 
     if (i >= maxIter)
-    {
-        return maxIter;
-    }
+        return (double)maxIter;
 
     double mag = sqrt(xx + yy);
-    return i + 1.0 - log(log(mag)) / log(2.0);
-}
-
-// Derive maxIter from zoom (softer, non-insane scaling)
-static int auto_max_iter(double zoom)
-{
-    const int minIter = 80;   // base detail at full view
-    const int maxIter = 6000; // hard cap
-    const double K = 50.0;    // strength
-    const double P = 1.25;    // exponent on log10(zoom)
-
-    if (zoom < 1.0)
-        zoom = 1.0;
-
-    double logz = log10(zoom);
-    if (logz < 1.0)
-        logz = 1.0;
-
-    double it = (double)minIter + K * pow(logz, P);
-
-    if (it < minIter)
-        it = minIter;
-    if (it > maxIter)
-        it = maxIter;
-
-    return (int)(it + 0.5);
+    return (double)i + 1.0 - log(log(mag)) / log(2.0);
 }
 
 // Map iteration value to [0,1] including interior handling.
@@ -106,13 +75,9 @@ static int auto_max_iter(double zoom)
 static double normalized_escape(double t, int maxIter, int fillInterior)
 {
     if (t >= (double)maxIter)
-    {
         return fillInterior ? 1.0 : 0.0;
-    }
     if (t <= 0.0)
-    {
         return 0.0;
-    }
     return t / (double)maxIter;
 }
 
@@ -123,8 +88,9 @@ static double normalized_escape(double t, int maxIter, int fillInterior)
 //    scale >= 1 : block mode, block ~ scale pixels
 //    0 < scale < 1 : AA mode, samplesPerDim ~ 1/scale
 // fillInterior : 0 = hollow (black interior), non-zero = filled (white interior)
+// maxIter      : caller-controlled iteration count; if <= 0, defaults to 200
 void render_rows(double cx, double cy, double zoom, double scale,
-                 int yStart, int yEnd, int fillInterior)
+                 int yStart, int yEnd, int fillInterior, int maxIter)
 {
     if (!framebuffer || fbW <= 0 || fbH <= 0)
         return;
@@ -133,6 +99,9 @@ void render_rows(double cx, double cy, double zoom, double scale,
         zoom = 1.0;
     if (scale <= 0.0)
         scale = 1.0;
+
+    if (maxIter <= 0)
+        maxIter = 200;
 
     if (yStart < 0)
         yStart = 0;
@@ -147,8 +116,6 @@ void render_rows(double cx, double cy, double zoom, double scale,
 
     double basePixelSize = 4.0 / (double)minDim;
     double pixelSize = basePixelSize / zoom;
-
-    int maxIter = auto_max_iter(zoom);
 
     double halfW = 0.5 * (double)fbW;
     double halfH = 0.5 * (double)fbH;
@@ -190,11 +157,11 @@ void render_rows(double cx, double cy, double zoom, double scale,
                 for (int jj = 0; jj < bh; jj++)
                 {
                     int ypix = j + jj;
-                    size_t rowBase = (size_t)ypix * fbW;
+                    size_t rowBase = (size_t)ypix * (size_t)fbW;
                     for (int ii = 0; ii < bw; ii++)
                     {
                         int xpix = i + ii;
-                        size_t idx = (rowBase + (size_t)xpix) * 4;
+                        size_t idx = (rowBase + (size_t)xpix) * 4u;
                         framebuffer[idx + 0] = g;
                         framebuffer[idx + 1] = g;
                         framebuffer[idx + 2] = g;
@@ -210,6 +177,7 @@ void render_rows(double cx, double cy, double zoom, double scale,
         int samplesPerDim = (int)(invScale + 0.5);
         if (samplesPerDim < 1)
             samplesPerDim = 1;
+
         const int MAX_SAMPLES_PER_DIM = 8;
         if (samplesPerDim > MAX_SAMPLES_PER_DIM)
             samplesPerDim = MAX_SAMPLES_PER_DIM;
@@ -240,7 +208,6 @@ void render_rows(double cx, double cy, double zoom, double scale,
 
                         double t = mandel(x, y, maxIter);
                         double n = normalized_escape(t, maxIter, fillInterior);
-
                         sum += n;
                     }
                 }
@@ -252,7 +219,7 @@ void render_rows(double cx, double cy, double zoom, double scale,
                     avg = 1.0;
 
                 uint8_t g = (uint8_t)(avg * 255.0 + 0.5);
-                size_t idx = ((size_t)j * fbW + (size_t)i) * 4;
+                size_t idx = ((size_t)j * (size_t)fbW + (size_t)i) * 4u;
                 framebuffer[idx + 0] = g;
                 framebuffer[idx + 1] = g;
                 framebuffer[idx + 2] = g;
@@ -263,7 +230,8 @@ void render_rows(double cx, double cy, double zoom, double scale,
 }
 
 // Convenience: full-frame render (fallback)
-void render_frame(double cx, double cy, double zoom, double scale, int fillInterior)
+void render_frame(double cx, double cy, double zoom, double scale,
+                  int fillInterior, int maxIter)
 {
-    render_rows(cx, cy, zoom, scale, 0, fbH, fillInterior);
+    render_rows(cx, cy, zoom, scale, 0, fbH, fillInterior, maxIter);
 }
