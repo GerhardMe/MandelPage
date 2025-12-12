@@ -86,7 +86,7 @@ uniform vec2 u_c;           // (cRe, cIm)
 uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
 
 const int maxIter = ${MAX_ITER};
-const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
+const float bailoutSq = 16.0;
 
 void main() {
     vec2 z;
@@ -153,7 +153,7 @@ uniform vec2 u_c;           // (cRe, cIm)
 uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
 
 const int maxIter = ${MAX_ITER};
-const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
+const float bailoutSq = 16.0;
 
 void main() {
     vec2 z;
