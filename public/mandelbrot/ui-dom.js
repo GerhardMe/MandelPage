@@ -120,6 +120,55 @@ function updateColorChangers() {
     });
 }
 
+// ------------------ live recolor controls ------------------
+
+function syncFillInteriorFlagFromDom() {
+    if (typeof fillInterior === "undefined") return;
+    if (!fillInside) return;
+    fillInterior = fillInside.checked ? 1 : 0;
+}
+
+function recolorMandelNow() {
+    if (typeof recolorFromLastGray === "function") {
+        recolorFromLastGray();
+    }
+}
+
+function recolorJuliaNow() {
+    if (typeof recolorJuliaFromLastGray === "function") {
+        recolorJuliaFromLastGray();
+    }
+}
+
+if (fc) {
+    fc.addEventListener("input", () => {
+        updateColorChangers();
+        // Shared color affects both.
+        recolorMandelNow();
+        recolorJuliaNow();
+    });
+}
+
+if (mandelGlow) {
+    mandelGlow.addEventListener("input", () => {
+        recolorMandelNow();
+    });
+}
+
+if (juliaGlow) {
+    juliaGlow.addEventListener("input", () => {
+        recolorJuliaNow();
+    });
+}
+
+if (fillInside) {
+    fillInside.addEventListener("change", () => {
+        syncFillInteriorFlagFromDom();
+        recolorMandelNow();
+        recolorJuliaNow();
+    });
+}
+
 // ------------------ generic draggable / resizable panels ------------------
 
 function setupDraggablePanel(panelEl, headerEl) {

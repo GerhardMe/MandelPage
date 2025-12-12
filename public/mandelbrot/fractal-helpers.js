@@ -195,67 +195,88 @@ function getJuliaGlowValue() {
 
 // ------------------ drawing helpers ------------------
 
-function colorizeGray(gray, value) {
-    const N = gray.length;
+function clamp01(x) {
+    if (!Number.isFinite(x)) return 0;
+    if (x < 0) return 0;
+    if (x > 1) return 1;
+    return x;
+}
+
+function clampInt(x, lo, hi) {
+    const n = Number(x);
+    if (!Number.isFinite(n)) return lo;
+    const v = Math.trunc(n);
+    return Math.max(lo, Math.min(hi, v));
+}
+
+function getSharedColorHex() {
+    if (typeof fc !== "undefined" && fc && typeof fc.value === "string") {
+        return fc.value;
+    }
+    return "#ffffff";
+}
+
+function colorizeGray(gray, opts = {}) {
+    // Pure function.
+    // - gray: Uint8Array (0..255)
+    // - opts.colorHex: "#rrggbb" (shared)
+    // - opts.glow: 0..100 (per-fractal)
+    // - opts.fillInterior: boolean (treat v==255 as solid)
+
+    const N = gray.length | 0;
     const out = new Uint8ClampedArray(N * 4);
 
-    const color = hexToRgb(fc.value);
+    const colorHex = typeof opts.colorHex === "string" ? opts.colorHex : getSharedColorHex();
+    const color = hexToRgb(colorHex);
 
-    const rawFull = parseInt(value, 10);
-    const raw = Number.isFinite(rawFull)
-        ? Math.max(0, Math.min(100, rawFull))
-        : 0; // 0..100
+    const glow = clampInt(opts.glow, 0, 100);
+    const fill = !!opts.fillInterior;
 
-    const isLowBlur = raw <= 50;
-    const isHighBlur = raw > 50;
+    // Keep the old feel, but make it explicit and numerically stable.
+    // 0..50: power curve (more contrast control)
+    // 50..100: band/burn (more "glow"/edge emphasis)
+    const lowMode = glow <= 50;
 
-    let lowExp = null;
+    let lowExp = 1;
     let lowToLinear = 0;
-    if (isLowBlur) {
-        const clamped = raw;
-        const tOrig = clamped / 100;
-        const minExp = 0.25;
-        const maxExp = 3.0;
-        lowExp = minExp + (1 - tOrig) * (maxExp - minExp);
-        lowToLinear = clamped / 50;
+    if (lowMode) {
+        const t = glow / 50; // 0..1
+        // At 0 -> exp ~3 (darker), at 50 -> exp ~0.25 (brighter)
+        lowExp = 3.0 + (0.25 - 3.0) * t;
+        lowToLinear = t;
     }
 
-    let bandWidth = null;
+    let bandWidth = 1;
     let highToLinear = 0;
-    if (isHighBlur) {
-        const u = (raw - 50) / 50;
-        bandWidth = 1 - 0.8 * u;
-        highToLinear = (100 - raw) / 50;
+    if (!lowMode) {
+        const u = (glow - 50) / 50; // 0..1
+        bandWidth = 1 - 0.8 * u; // 1..0.2
+        highToLinear = 1 - u; // 1..0
     }
 
     let o = 0;
     for (let i = 0; i < N; i++) {
         const v = gray[i] | 0;
         const gNorm = v / 255;
-        let r, g, b;
 
+        let w;
         if (gNorm <= 0) {
-            r = g = b = 0;
+            w = 0;
+        } else if (fill && v === 255) {
+            w = 1;
+        } else if (lowMode) {
+            // Smooth contrast curve blended toward linear.
+            const curved = clamp01(Math.pow(gNorm, lowExp));
+            w = curved * (1 - lowToLinear) + gNorm * lowToLinear;
         } else {
-            let wVal;
-            const isFilledInterior = fillInterior && v === 255;
-
-            if (isFilledInterior) {
-                wVal = 1;
-            } else if (isLowBlur) {
-                let base = Math.pow(gNorm, lowExp);
-                if (base < 0) base = 0;
-                if (base > 1) base = 1;
-                wVal = base * (1 - lowToLinear) + gNorm * lowToLinear;
-            } else {
-                let burn = gNorm >= bandWidth ? 1 : gNorm / bandWidth;
-                wVal = burn * (1 - highToLinear) + gNorm * highToLinear;
-            }
-
-            r = color.r * wVal;
-            g = color.g * wVal;
-            b = color.b * wVal;
+            // Burn into a band near the top.
+            const burn = gNorm >= bandWidth ? 1 : gNorm / (bandWidth || 1e-9);
+            w = burn * (1 - highToLinear) + gNorm * highToLinear;
         }
+
+        const r = color.r * w;
+        const g = color.g * w;
+        const b = color.b * w;
 
         out[o++] = r;
         out[o++] = g;
@@ -277,7 +298,11 @@ function redrawFromBase() {
 
 function redrawFullColored(gray, fbW, fbH) {
     // Mandelbrot uses its own glow control
-    const colored = colorizeGray(gray, getMandelGlowValue());
+    const colored = colorizeGray(gray, {
+        colorHex: getSharedColorHex(),
+        glow: getMandelGlowValue(),
+        fillInterior,
+    });
 
     bufCanvas.width = fbW;
     bufCanvas.height = fbH;
@@ -309,10 +334,18 @@ function recolorJuliaFromLastGray() {
     const jctx = juliaCanvas.getContext("2d");
     if (!jctx) return;
 
-    const colored = colorizeGray(lastJuliaGray, getJuliaGlowValue());
+    const colored = colorizeGray(lastJuliaGray, {
+        colorHex: getSharedColorHex(),
+        glow: getJuliaGlowValue(),
+        fillInterior,
+    });
     const img = new ImageData(colored, lastJuliaFbW, lastJuliaFbH);
 
-    const tmp = document.createElement("canvas");
+    // Reuse a single temp canvas (avoid per-input allocations).
+    if (!recolorJuliaFromLastGray._tmp) {
+        recolorJuliaFromLastGray._tmp = document.createElement("canvas");
+    }
+    const tmp = recolorJuliaFromLastGray._tmp;
     tmp.width = lastJuliaFbW;
     tmp.height = lastJuliaFbH;
     const tctx = tmp.getContext("2d");

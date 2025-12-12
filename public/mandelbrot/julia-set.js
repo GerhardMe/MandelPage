@@ -590,8 +590,12 @@ function handleJuliaFrame(msg) {
 
     const grayArr = new Uint8Array(gray);
 
-    // Use Julia's own glow factor; colorizeGray expects the glow value as second arg.
-    const colored = colorizeGray(grayArr, getJuliaGlowValue());
+    // Shared color, per-fractal glow.
+    const colored = colorizeGray(grayArr, {
+        colorHex: (typeof fc !== "undefined" && fc) ? fc.value : "#ffffff",
+        glow: getJuliaGlowValue(),
+        fillInterior,
+    });
     const img = new ImageData(colored, stageW, stageH);
 
     if (

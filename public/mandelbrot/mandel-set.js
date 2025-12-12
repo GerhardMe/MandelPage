@@ -272,6 +272,8 @@ function handleWorkerPartial(msg) {
     const numRows = yEnd - yStart;
     if (numRows <= 0) return;
 
+    const bandGray = gray instanceof Uint8Array ? gray : new Uint8Array(gray);
+
     if (!lastGray || lastFbW !== fbW || lastFbH !== fbH) {
         lastGray = new Uint8Array(fbW * fbH);
         lastFbW = fbW;
@@ -282,10 +284,14 @@ function handleWorkerPartial(msg) {
         const srcBase = row * fbW;
         const dstRow = yStart + row;
         const dstBase = dstRow * fbW;
-        lastGray.set(gray.subarray(srcBase, srcBase + fbW), dstBase);
+        lastGray.set(bandGray.subarray(srcBase, srcBase + fbW), dstBase);
     }
 
-    const coloredBand = colorizeGray(gray);
+    const coloredBand = colorizeGray(bandGray, {
+        colorHex: (typeof fc !== "undefined" && fc) ? fc.value : "#ffffff",
+        glow: getMandelGlowValue(),
+        fillInterior,
+    });
 
     bufCanvas.width = fbW;
     bufCanvas.height = numRows;
@@ -323,7 +329,7 @@ function handleWorkerFrame(msg) {
 
     const view = getCurrentView();
 
-    lastGray = new Uint8Array(gray);
+    lastGray = gray instanceof Uint8Array ? new Uint8Array(gray) : new Uint8Array(gray);
     lastFbW = fbW;
     lastFbH = fbH;
 
