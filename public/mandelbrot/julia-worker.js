@@ -16,16 +16,34 @@
 //       // If omitted, worker uses the old symmetric view around 0.
 //       viewXMin, viewXMax,
 //       viewYMin, viewYMax,
+//
+//       // Optional grayscale mode:
+//       //   false / omitted -> absolute grayscale (default behavior)
+//       //   true           -> relative grayscale (max contrast)
+//       relativeGray,
 //     }
 //
 //   worker -> main (GRAYSCALE ONLY):
 //     { type: "frame", jobId, fbW, fbH, scale, gray: ArrayBuffer }
 //
-// Semantics:
+//   worker -> main (STATUS):
+//     { type: "status", jobId, backend, grayscale }
+//
+// Semantics (absolute mode):
 //   gray[i] in [0..255]
 //   - 0   = fast escape
 //   - 255 = interior (did not escape in MAX_ITER)
 //   - intermediate = linear in escape iteration
+//
+// Semantics (relative mode):
+//   - Start from the absolute gray buffer.
+//   - Let interior pixels be those with gray == 255 from the iteration logic.
+//   - Among non-interior pixels, find minGray and maxGray.
+//   - If minGray < maxGray:
+//       remap each non-interior pixel linearly so minGray -> 0, maxGray -> 255.
+//     Interior pixels remain 255.
+//   - If there are no non-interior pixels or range is degenerate, fall back
+//     to the absolute buffer (no change).
 
 "use strict";
 
@@ -160,8 +178,8 @@ function compileShader(type, source) {
 
 function safeLinkProgram(vs, fs) {
     const prog = gl.createProgram();
-    gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
+    gl.attachShader(prog, vs); // order doesn't matter
     gl.linkProgram(prog);
     const ok = gl.getProgramParameter(prog, gl.LINK_STATUS);
     if (!ok) {
@@ -334,6 +352,42 @@ function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
     return gray;
 }
 
+// ------------- Relative grayscale post-processing -------------
+
+// Modifies gray in-place.
+// Returns true if remapping was applied, false if skipped (e.g. degenerate range).
+function applyRelativeGrayscale(gray) {
+    const len = gray.length;
+
+    // Find min/max among non-interior pixels (gray != 255).
+    let minVal = 255;
+    let maxVal = 0;
+
+    for (let i = 0; i < len; i++) {
+        const v = gray[i];
+        if (v === 255) continue; // keep interior as pure white, don't use in range
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
+    }
+
+    // If everything is interior or range is degenerate, skip.
+    if (minVal > maxVal || minVal === 255) return false;
+    const range = maxVal - minVal;
+    if (range <= 0) return false;
+
+    for (let i = 0; i < len; i++) {
+        const v = gray[i];
+        if (v === 255) continue; // preserve interior
+        const t = (v - minVal) / range;
+        let g = Math.round(t * 255);
+        if (g < 0) g = 0;
+        else if (g > 255) g = 255;
+        gray[i] = g;
+    }
+
+    return true;
+}
+
 // ------------- Worker protocol -------------
 
 self.postMessage({ type: "ready" });
@@ -355,6 +409,9 @@ self.onmessage = (e) => {
         viewXMax,
         viewYMin,
         viewYMax,
+
+        // optional grayscale mode:
+        relativeGray,
     } = msg;
 
     const w = fbW | 0;
@@ -372,6 +429,8 @@ self.onmessage = (e) => {
             };
 
     let gray = null;
+    let backend = "gpu";
+
     try {
         gray = renderJuliaWebGL(
             w,
@@ -385,6 +444,7 @@ self.onmessage = (e) => {
     }
 
     if (!gray) {
+        backend = "cpu";
         try {
             gray = renderJuliaCPU(
                 w,
@@ -401,6 +461,25 @@ self.onmessage = (e) => {
             return;
         }
     }
+
+    // Optional relative grayscale remap
+    const useRelative = !!relativeGray;
+    let grayscaleMode = "absolute";
+
+    if (useRelative) {
+        const applied = applyRelativeGrayscale(gray);
+        if (applied) {
+            grayscaleMode = "relative";
+        }
+    }
+
+    // Status message indicating backend and grayscale mode for this job
+    self.postMessage({
+        type: "status",
+        jobId,
+        backend,        // "gpu" or "cpu"
+        grayscale: grayscaleMode, // "absolute" or "relative"
+    });
 
     self.postMessage(
         {

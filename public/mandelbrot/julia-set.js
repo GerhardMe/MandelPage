@@ -64,12 +64,40 @@ let juliaActiveParams = null;     // params for the currently running job
 // Render scheduling throttle: avoid starting a job on every tiny move
 let juliaRenderScheduled = false;
 
+// ------------------ status UI state ------------------
+
+const juliaStatusEl = document.getElementById("juliaStatus");
+let juliaLastBackend = null;      // "gpu" | "cpu" | null
+let juliaLastGrayscale = null;    // "absolute" | "relative" | null
+
+function updateJuliaStatus() {
+    if (!juliaStatusEl) return;
+
+    const backend = juliaLastBackend || "unknown";
+    const state = juliaJobInFlight ? "working" : "idle";
+
+    let stageText;
+    if (juliaJobInFlight && juliaCurrentJobId !== null) {
+        const idx = Math.max(
+            0,
+            Math.min(juliaStageIndex, JULIA_STAGES.length - 1),
+        );
+        stageText = `stage ${idx + 1}/${JULIA_STAGES.length}`;
+    } else {
+        stageText = "stage -/-";
+    }
+
+    juliaStatusEl.textContent =
+        `Julia: ${state}, backend: ${backend}, ${stageText}`;
+}
+
 // Cancel current Julia job locally (worker keeps running, but results are ignored)
 function cancelJuliaJob() {
     juliaJobInFlight = false;
     juliaActiveParams = null;
     juliaCurrentJobId = null;
     juliaStageIndex = 0; // keep a valid index, never -1
+    updateJuliaStatus();
 }
 
 // ------------------ Julia world-rect helpers ------------------
@@ -509,6 +537,7 @@ function startJuliaJobFromPending() {
     juliaJobInFlight = true;
     juliaActiveParams = params;
 
+    updateJuliaStatus();
     sendJuliaStage(jobId, params);
 }
 
@@ -541,6 +570,8 @@ function sendJuliaStage(jobId, params) {
         viewXMax: params.viewXMax,
         viewYMin: params.viewYMin,
         viewYMax: params.viewYMax,
+        // send relativeGray if you want that mode:
+        // relativeGray: true,
     });
 }
 
@@ -591,6 +622,7 @@ function handleJuliaFrame(msg) {
     if (havePending) {
         juliaJobInFlight = false;
         juliaActiveParams = null;
+        updateJuliaStatus();
         // stageIndex will be reset to 0 when the new job starts
         startJuliaJobFromPending();
         return;
@@ -599,12 +631,13 @@ function handleJuliaFrame(msg) {
     // No pending request -> either advance stage or finish job
     if (juliaStageIndex < lastStageIndex) {
         juliaStageIndex++;
+        updateJuliaStatus();
         sendJuliaStage(jobId, juliaActiveParams);
     } else {
         // Finished final stage for this view
         juliaJobInFlight = false;
         juliaActiveParams = null;
-        // stage index can stay at lastStageIndex; next job will reset to 0
+        updateJuliaStatus();
         if (juliaPendingRequest) {
             startJuliaJobFromPending();
         }
@@ -634,13 +667,27 @@ function initJuliaWorker() {
     juliaActiveParams = null;
     juliaStageIndex = 0;
     juliaCurrentJobId = null;
+    juliaLastBackend = null;
+    juliaLastGrayscale = null;
+    updateJuliaStatus();
 
     juliaWorker.onmessage = (e) => {
         const msg = e.data;
         switch (msg.type) {
             case "ready":
                 juliaWorkerReady = true;
+                updateJuliaStatus();
                 requestJuliaRender();
+                break;
+            case "status":
+                // From julia-worker: { type: "status", jobId, backend, grayscale }
+                if (typeof msg.backend === "string") {
+                    juliaLastBackend = msg.backend;
+                }
+                if (typeof msg.grayscale === "string") {
+                    juliaLastGrayscale = msg.grayscale;
+                }
+                updateJuliaStatus();
                 break;
             case "frame":
                 handleJuliaFrame(msg);
