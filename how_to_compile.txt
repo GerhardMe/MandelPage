@@ -1,0 +1,4 @@
+emcc mandel.c -O3 \
+  -s EXPORTED_FUNCTIONS='["_init_framebuffer","_get_framebuffer_ptr","_render_rows","_render_frame"]' \
+  -s EXPORTED_RUNTIME_METHODS='["cwrap"]' \
+  -o mandel.js

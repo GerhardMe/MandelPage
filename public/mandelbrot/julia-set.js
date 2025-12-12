@@ -73,23 +73,27 @@ let juliaLastGrayscale = null;    // "absolute" | "relative" | null
 function updateJuliaStatus() {
     if (!juliaStatusEl) return;
 
-    const backend = juliaLastBackend || "unknown";
-    const state = juliaJobInFlight ? "working" : "idle";
+    const parts = [];
 
-    let stageText;
+    const state = juliaJobInFlight ? "working" : "idle";
+    parts.push(`Julia: ${state}`);
+
+    const backend = juliaLastBackend || "unknown";
+    parts.push(`backend: ${backend}`);
+
     if (juliaJobInFlight && juliaCurrentJobId !== null) {
         const idx = Math.max(
             0,
             Math.min(juliaStageIndex, JULIA_STAGES.length - 1),
         );
-        stageText = `stage ${idx + 1}/${JULIA_STAGES.length}`;
+        parts.push(`stage ${idx + 1}/${JULIA_STAGES.length}`);
     } else {
-        stageText = "stage -/-";
+        parts.push("stage -/-");
     }
 
-    juliaStatusEl.textContent =
-        `Julia: ${state}, backend: ${backend}, ${stageText}`;
+    juliaStatusEl.textContent = parts.join(" | ");
 }
+
 
 // Cancel current Julia job locally (worker keeps running, but results are ignored)
 function cancelJuliaJob() {
