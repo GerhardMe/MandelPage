@@ -222,6 +222,14 @@ input[type="number"] {
     text-decoration: underline;
 }
 
+.summon {
+    border: 1px solid;
+    border-radius: 3px;
+    padding: 2px 1em;
+    margin-left: 1em;
+    cursor: pointer;
+}
+
 /* ---------- julia cursor ---------- */
 
 .cursorWidget {
