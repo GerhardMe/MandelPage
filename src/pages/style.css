@@ -105,13 +105,13 @@ label {
 
 .row {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
 
-.flex {
-    flex: 1 1 auto;
+    justify-content: right;
+    margin-bottom: 0.3em;
+
+    label:not(:last-child) {
+        margin-right: 1em;
+    }
 }
 
 /* ---------- range & color inputs ---------- */
@@ -126,7 +126,18 @@ input[type="color"] {
 }
 
 input[type="range"] {
-    width: 80%;
+    min-width: 180px;
+    width: 100%;
+    appearance: auto;
+}
+
+input[type="number"] {
+    max-width: 8em;
+    appearance: auto;
+    border: 1px solid;
+    border-radius: 3px;
+    padding: 1px;
+    padding-left: 0.2em;
 }
 
 /* ---------- julia specifics ---------- */
@@ -176,7 +187,7 @@ input[type="range"] {
 /* ---------- status bar ---------- */
 
 .statusBar {
-    height: 20px;
+    height: 2.4em;
     padding: 4px 8px;
     background: #0c0c0c;
     border-top: 1px solid #3a3a3a;

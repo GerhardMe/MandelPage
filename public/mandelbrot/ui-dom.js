@@ -16,6 +16,7 @@ const mandelGlow = document.getElementById("mandelGlow");
 const juliaGlow = document.getElementById("juliaGlow");
 const relativeJulia = document.getElementById("relativeJulia");
 const juliaIterations = document.getElementById("juliaIterations");
+const juliaBuddha = document.getElementById("juliaBuddha");
 
 const fillInside = document.getElementById("fillInside");
 const statusEl = document.getElementById("status");
@@ -432,6 +433,13 @@ if (juliaIterations) {
     });
 }
 
+if (juliaBuddha) {
+    juliaBuddha.addEventListener("change", () => {
+        cancelJuliaJob();
+        requestJuliaRender();
+    });
+}
+
 // ------------------ Julia panel ------------------
 
 function syncJuliaCanvasSize() {
@@ -440,7 +448,7 @@ function syncJuliaCanvasSize() {
     const boxRect = juliaBox.getBoundingClientRect();
 
     const width = Math.max(1, Math.floor(boxRect.width) - 24);
-    const height = Math.max(1, Math.floor(boxRect.height - 135));
+    const height = Math.max(1, Math.floor(boxRect.height - 147));
 
     juliaContent.style.width = width + "px";
     juliaContent.style.height = height + "px";

@@ -28,7 +28,7 @@ import "./style.css";
                 </div>
 
                 <div class="row">
-                    <label class="flex">
+                    <label>
                         Glow
                         <input
                             type="range"
@@ -48,9 +48,10 @@ import "./style.css";
                 </div>
 
                 <div class="row">
-                    <label class="flex">
+                    <label>
                         Iterations
                         <input
+                            class="colorChanger"
                             type="number"
                             id="mandelIterations"
                             value="200"
@@ -82,7 +83,7 @@ import "./style.css";
                 </div>
 
                 <div class="row">
-                    <label class="flex">
+                    <label>
                         Glow
                         <input
                             type="range"
@@ -102,9 +103,14 @@ import "./style.css";
                 </div>
 
                 <div class="row">
-                    <label class="flex">
+                    <label>
                         Iterations
-                        <input type="number" id="juliaIterations" value="500" />
+                        <input
+                            class="colorChanger"
+                            type="number"
+                            id="juliaIterations"
+                            value="500"
+                        />
                     </label>
                 </div>
 

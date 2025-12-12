@@ -124,9 +124,6 @@ function syncJuliaCanvasSizeAndWorld() {
         return;
     }
 
-    const oldW = lastJuliaCanvasW || newW;
-    const oldH = lastJuliaCanvasH || newH;
-
     lastJuliaCanvasW = newW;
     lastJuliaCanvasH = newH;
 
@@ -220,12 +217,12 @@ function buildJuliaParams() {
     const relativeGray = !!(relativeJulia && relativeJulia.checked);
 
     // iterations
-    let maxIter = 500; // default fallback
+    let maxIter = 500;
     if (juliaIterations) {
         const n = parseInt(juliaIterations.value, 10);
         if (Number.isFinite(n)) maxIter = n;
     }
-    maxIter = Math.max(1, Math.min(1000000, maxIter)); // clamp
+    maxIter = Math.max(1, Math.min(1000000, maxIter));
 
     return {
         outW,
@@ -245,8 +242,6 @@ function buildJuliaParams() {
         maxIter,
     };
 }
-
-
 
 // ------------------ Julia cursor helpers ------------------
 
@@ -592,8 +587,6 @@ function sendJuliaStage(jobId, params) {
     });
 }
 
-
-
 function handleJuliaFrame(msg) {
     const { jobId, fbW, fbH, gray } = msg;
     if (juliaCurrentJobId === null || jobId !== juliaCurrentJobId) return;
@@ -672,10 +665,8 @@ function handleJuliaFrame(msg) {
 function initJuliaWorker() {
     if (!juliaCanvas) return;
 
-    // Make sure the canvas backing size tracks CSS size + DPR
     syncJuliaCanvasSizeAndWorld();
 
-    // React to panel resizes / drag-resizes
     if (window.ResizeObserver) {
         const ro = new ResizeObserver(() => {
             syncJuliaCanvasSizeAndWorld();
@@ -685,49 +676,67 @@ function initJuliaWorker() {
 
     setupJuliaPanZoom();
 
-    juliaWorker = new Worker("/mandelbrot/julia-worker.js");
-    juliaWorkerReady = false;
-    juliaJobInFlight = false;
-    juliaPendingRequest = null;
-    juliaActiveParams = null;
-    juliaStageIndex = 0;
-    juliaCurrentJobId = null;
-    juliaLastBackend = null;
-    juliaLastGrayscale = null;
-    updateJuliaStatus();
+    const desiredUrl = "/mandelbrot/julia-worker.js";
 
-    juliaWorker.onmessage = (e) => {
-        const msg = e.data;
-        switch (msg.type) {
-            case "ready":
-                juliaWorkerReady = true;
-                updateJuliaStatus();
-                requestJuliaRender();
-                break;
-            case "status":
-                // From julia-worker: { type: "status", jobId, backend, grayscale }
-                if (typeof msg.backend === "string") {
-                    juliaLastBackend = msg.backend;
-                }
-                if (typeof msg.grayscale === "string") {
-                    juliaLastGrayscale = msg.grayscale;
-                }
-                updateJuliaStatus();
-                break;
-            case "frame":
-                handleJuliaFrame(msg);
-                break;
-            case "error":
-                setErrorStatus(msg.message || "julia worker error");
-                break;
-        }
-    };
-    juliaWorker.onerror = (err) => {
-        setErrorStatus(err.message || "julia worker error");
-    };
-    juliaWorker.onmessageerror = () => {
-        setErrorStatus("julia worker message error");
-    };
+    // (Re)create worker if needed
+    if (juliaWorker) {
+        // keep existing worker instance
+    } else {
+        juliaWorker = new Worker(desiredUrl);
+
+        juliaWorkerReady = false;
+        juliaJobInFlight = false;
+        juliaPendingRequest = null;
+        juliaActiveParams = null;
+        juliaStageIndex = 0;
+        juliaCurrentJobId = null;
+        juliaLastBackend = null;
+        juliaLastGrayscale = null;
+        updateJuliaStatus();
+
+        juliaWorker.onmessage = (e) => {
+            const msg = e.data;
+            switch (msg.type) {
+                case "ready":
+                    juliaWorkerReady = true;
+                    updateJuliaStatus();
+                    requestJuliaRender();
+                    break;
+
+                case "status":
+                    if (typeof msg.backend === "string") juliaLastBackend = msg.backend;
+                    if (typeof msg.grayscale === "string") juliaLastGrayscale = msg.grayscale;
+                    updateJuliaStatus();
+                    break;
+
+                case "frame":
+                    handleJuliaFrame(msg);
+                    break;
+
+                case "error":
+                    console.error("Julia worker error:", msg.message || msg);
+                    setErrorStatus && setErrorStatus("Julia worker error");
+                    juliaWorkerReady = false;
+                    juliaJobInFlight = false;
+                    juliaPendingRequest = null;
+                    juliaActiveParams = null;
+                    juliaCurrentJobId = null;
+                    updateJuliaStatus();
+                    break;
+            }
+        };
+
+        juliaWorker.onerror = (err) => {
+            console.error("Julia worker onerror:", err);
+            setErrorStatus && setErrorStatus("Julia worker error");
+            juliaWorkerReady = false;
+            juliaJobInFlight = false;
+            juliaPendingRequest = null;
+            juliaActiveParams = null;
+            juliaCurrentJobId = null;
+            updateJuliaStatus();
+        };
+    }
 }
 
 function updateJuliaFromCursor() {
