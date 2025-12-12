@@ -14,6 +14,8 @@ const controlsHeader = document.getElementById("controlsHeader");
 const fc = document.getElementById("fc");
 const mandelGlow = document.getElementById("mandelGlow");
 const juliaGlow = document.getElementById("juliaGlow");
+const relativeJulia = document.getElementById("relativeJulia");
+const juliaIterations = document.getElementById("juliaIterations");
 
 const fillInside = document.getElementById("fillInside");
 const statusEl = document.getElementById("status");
@@ -409,6 +411,24 @@ if (fillInside) {
 
         // For Julia, interior fill is handled in colorizeGray only
         recolorJuliaFromLastGray();
+    });
+}
+
+if (relativeJulia) {
+    relativeJulia.addEventListener("change", () => {
+        cancelJuliaJob();
+        requestJuliaRender();
+    });
+}
+
+if (juliaIterations) {
+    juliaIterations.addEventListener("input", () => {
+        cancelJuliaJob();
+        requestJuliaRender();
+    });
+    juliaIterations.addEventListener("change", () => {
+        cancelJuliaJob();
+        requestJuliaRender();
     });
 }
 

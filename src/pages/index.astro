@@ -50,7 +50,11 @@ import "./style.css";
                 <div class="row">
                     <label class="flex">
                         Iterations
-                        <input type="number" id="iterations" value="200" />
+                        <input
+                            type="number"
+                            id="mandelIterations"
+                            value="200"
+                        />
                     </label>
 
                     <label>
@@ -90,7 +94,17 @@ import "./style.css";
                     </label>
 
                     <label>
-                        Relative contrast<input type="checkbox" id="relative" />
+                        Relative contrast<input
+                            type="checkbox"
+                            id="relativeJulia"
+                        />
+                    </label>
+                </div>
+
+                <div class="row">
+                    <label class="flex">
+                        Iterations
+                        <input type="number" id="juliaIterations" value="500" />
                     </label>
                 </div>
 

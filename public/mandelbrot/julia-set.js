@@ -217,21 +217,36 @@ function buildJuliaParams() {
 
     const vr = getJuliaViewRect();
 
+    const relativeGray = !!(relativeJulia && relativeJulia.checked);
+
+    // iterations
+    let maxIter = 500; // default fallback
+    if (juliaIterations) {
+        const n = parseInt(juliaIterations.value, 10);
+        if (Number.isFinite(n)) maxIter = n;
+    }
+    maxIter = Math.max(1, Math.min(1000000, maxIter)); // clamp
+
     return {
         outW,
         outH,
         cRe: juliaCursorWorldX,
         cIm: juliaCursorWorldY,
-        color,          // ignored by worker, kept for API compat
-        raw,            // ignored by worker; coloring is done on main thread
-        fillInterior: fillSnap, // ignored by worker
+        color,
+        raw,
+        fillInterior: fillSnap,
 
         viewXMin: vr.xMin,
         viewXMax: vr.xMax,
         viewYMin: vr.yMin,
         viewYMax: vr.yMax,
+
+        relativeGray,
+        maxIter,
     };
 }
+
+
 
 // ------------------ Julia cursor helpers ------------------
 
@@ -547,7 +562,6 @@ function sendJuliaStage(jobId, params) {
     if (!juliaCanvas) return;
     if (!params) return;
 
-    // stage index is guaranteed valid (0..length-1)
     const stageIdx = juliaStageIndex;
     if (stageIdx < 0 || stageIdx >= JULIA_STAGES.length) return;
 
@@ -572,10 +586,13 @@ function sendJuliaStage(jobId, params) {
         viewXMax: params.viewXMax,
         viewYMin: params.viewYMin,
         viewYMax: params.viewYMax,
-        // send relativeGray if you want that mode:
-        // relativeGray: true,
+
+        relativeGray: !!params.relativeGray,
+        maxIter: params.maxIter | 0,
     });
 }
+
+
 
 function handleJuliaFrame(msg) {
     const { jobId, fbW, fbH, gray } = msg;

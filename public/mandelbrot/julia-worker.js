@@ -1,12 +1,14 @@
 "use strict";
 
-const MAX_ITER = 300;
+// Defaults (used if main thread doesn't send maxIter)
+const DEFAULT_MAX_ITER = 300;
+
 const BAILOUT_RADIUS = 4.0;
 const BAILOUT_SQ = BAILOUT_RADIUS * BAILOUT_RADIUS;
 
 // Supersample limits (scale < 1 path)
-const MAX_SUPERSAMPLE_FACTOR = 6;          // cap 1/scale -> factor
-const MAX_UPSAMPLE_PIXELS = 10_000_000;    // cap internal render size
+const MAX_SUPERSAMPLE_FACTOR = 6;       // cap 1/scale -> factor
+const MAX_UPSAMPLE_PIXELS = 10_000_000; // cap internal render size
 
 // ------------- WebGL state -------------
 
@@ -21,7 +23,12 @@ let uResolutionLoc = null;
 let uCParamLoc = null;
 let uViewRectLoc = null; // xMin, xMax, yMin, yMax
 
-const VS_SOURCE_WEBGL2 = `#version 300 es
+let compiledMaxIter = null; // track shader iteration count used by current program
+
+// -------- Shader source builders (maxIter baked in) --------
+
+function vsSourceWebGL2() {
+    return `#version 300 es
 in vec2 a_position;
 out vec2 v_uv;
 void main() {
@@ -29,8 +36,11 @@ void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
 `;
+}
 
-const FS_SOURCE_WEBGL2 = `#version 300 es
+function fsSourceWebGL2(maxIter) {
+    const mi = Math.max(1, (maxIter | 0));
+    return `#version 300 es
 precision highp float;
 
 in vec2 v_uv;
@@ -40,8 +50,8 @@ uniform vec2 u_resolution;
 uniform vec2 u_c;           // (cRe, cIm)
 uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
 
-const int maxIter = ${MAX_ITER};
-const float bailoutSq = 16.0;
+const int maxIter = ${mi};
+const float bailoutSq = ${BAILOUT_SQ.toFixed(1)};
 
 void main() {
     vec2 z;
@@ -79,14 +89,15 @@ void main() {
         }
     }
 
-    bool isInterior = !escaped;
-    float gNorm = isInterior ? 1.0 : (escapeIter / float(maxIter));
+    float gNorm = (!escaped) ? 1.0 : (escapeIter / float(maxIter));
     float g = clamp(gNorm, 0.0, 1.0);
     outColor = vec4(g, g, g, 1.0);
 }
 `;
+}
 
-const VS_SOURCE_WEBGL1 = `
+function vsSourceWebGL1() {
+    return `
 attribute vec2 a_position;
 varying vec2 v_uv;
 void main() {
@@ -94,8 +105,11 @@ void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
 `;
+}
 
-const FS_SOURCE_WEBGL1 = `
+function fsSourceWebGL1(maxIter) {
+    const mi = Math.max(1, (maxIter | 0));
+    return `
 precision highp float;
 
 varying vec2 v_uv;
@@ -104,8 +118,8 @@ uniform vec2 u_resolution;
 uniform vec2 u_c;           // (cRe, cIm)
 uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
 
-const int maxIter = ${MAX_ITER};
-const float bailoutSq = 16.0;
+const int maxIter = ${mi};
+const float bailoutSq = ${BAILOUT_SQ.toFixed(1)};
 
 void main() {
     vec2 z;
@@ -143,13 +157,13 @@ void main() {
         }
     }
 
-    bool isInterior = !escaped;
-    float gNorm = isInterior ? 1.0 : (escapeIter / float(maxIter));
+    float gNorm = (!escaped) ? 1.0 : (escapeIter / float(maxIter));
     float g = clamp(gNorm, 0.0, 1.0);
 
     gl_FragColor = vec4(g, g, g, 1.0);
 }
 `;
+}
 
 // ------------- WebGL helpers -------------
 
@@ -216,19 +230,44 @@ function safeLinkProgram(vs, fs) {
     return prog;
 }
 
-function initGL(width, height) {
+function teardownGL() {
+    try {
+        if (gl && program) gl.deleteProgram(program);
+    } catch (_) { /* ignore */ }
+    try {
+        if (gl && posBuffer) gl.deleteBuffer(posBuffer);
+    } catch (_) { /* ignore */ }
+
+    program = null;
+    posBuffer = null;
+    aPositionLoc = -1;
+    uResolutionLoc = null;
+    uCParamLoc = null;
+    uViewRectLoc = null;
+    compiledMaxIter = null;
+}
+
+function initGL(width, height, maxIter) {
+    // If we already have GL but shader maxIter changed, rebuild program.
     if (gl && glCanvas) {
         glCanvas.width = width;
         glCanvas.height = height;
         gl.viewport(0, 0, width, height);
-        return true;
+
+        if ((maxIter | 0) === (compiledMaxIter | 0) && program) {
+            return true;
+        }
+
+        teardownGL();
     }
 
-    if (!createGLContext(width, height)) return false;
+    if (!gl) {
+        if (!createGLContext(width, height)) return false;
+    }
 
     try {
-        const vsSource = isWebGL2 ? VS_SOURCE_WEBGL2 : VS_SOURCE_WEBGL1;
-        const fsSource = isWebGL2 ? FS_SOURCE_WEBGL2 : FS_SOURCE_WEBGL1;
+        const vsSource = isWebGL2 ? vsSourceWebGL2() : vsSourceWebGL1();
+        const fsSource = isWebGL2 ? fsSourceWebGL2(maxIter) : fsSourceWebGL1(maxIter);
 
         const vs = compileShader(gl.VERTEX_SHADER, vsSource);
         const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
@@ -247,12 +286,13 @@ function initGL(width, height) {
         gl.bufferData(
             gl.ARRAY_BUFFER,
             new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-            gl.STATIC_DRAW,
+            gl.STATIC_DRAW
         );
 
         gl.viewport(0, 0, width, height);
         gl.disable(gl.DEPTH_TEST);
 
+        compiledMaxIter = maxIter | 0;
         return true;
     } catch (err) {
         self.postMessage({
@@ -264,19 +304,14 @@ function initGL(width, height) {
 
         glCanvas = null;
         gl = null;
-        program = null;
-        posBuffer = null;
-        aPositionLoc = -1;
-        uResolutionLoc = null;
-        uCParamLoc = null;
-        uViewRectLoc = null;
+        teardownGL();
         return false;
     }
 }
 
 // WebGL render: returns Uint8Array length = w*h (grayscale 0..255)
-function renderJuliaWebGL(w, h, cRe, cIm, viewRect) {
-    if (!initGL(w, h)) return null;
+function renderJuliaWebGL(w, h, cRe, cIm, viewRect, maxIter) {
+    if (!initGL(w, h, maxIter)) return null;
 
     glCanvas.width = w;
     glCanvas.height = h;
@@ -303,7 +338,7 @@ function renderJuliaWebGL(w, h, cRe, cIm, viewRect) {
             viewRect.xMin,
             viewRect.xMax,
             viewRect.yMin,
-            viewRect.yMax,
+            viewRect.yMax
         );
     } else {
         gl.uniform4f(uViewRectLoc, 0.0, 0.0, 0.0, 0.0);
@@ -323,7 +358,8 @@ function renderJuliaWebGL(w, h, cRe, cIm, viewRect) {
 
 // ------------- CPU fallback -------------
 
-function renderJuliaCPU(w, h, cRe, cIm, viewRect) {
+function renderJuliaCPU(w, h, cRe, cIm, viewRect, maxIter) {
+    const mi = Math.max(1, (maxIter | 0));
     const gray = new Uint8Array(w * h);
 
     const hasView =
@@ -354,10 +390,10 @@ function renderJuliaCPU(w, h, cRe, cIm, viewRect) {
 
             let zr = x0;
             let zi = y0;
-            let escapeIter = MAX_ITER;
+            let escapeIter = mi;
             let escaped = false;
 
-            for (let it = 0; it < MAX_ITER; it++) {
+            for (let it = 0; it < mi; it++) {
                 const zr2 = zr * zr - zi * zi + cRe;
                 const zi2 = 2 * zr * zi + cIm;
                 zr = zr2;
@@ -370,7 +406,7 @@ function renderJuliaCPU(w, h, cRe, cIm, viewRect) {
                 }
             }
 
-            const gNorm = escaped ? escapeIter / MAX_ITER : 1;
+            const gNorm = escaped ? (escapeIter / mi) : 1;
             const g = gNorm <= 0 ? 0 : gNorm >= 1 ? 1 : gNorm;
             gray[idx++] = (g * 255 + 0.5) | 0;
         }
@@ -382,7 +418,6 @@ function renderJuliaCPU(w, h, cRe, cIm, viewRect) {
 // ------------- Downsample (box filter) -------------
 
 function downsampleBox(grayUp, upW, upH, outW, outH, factor) {
-    // Assumes upW == outW*factor and upH == outH*factor
     const out = new Uint8Array(outW * outH);
     const area = factor * factor;
 
@@ -442,12 +477,10 @@ function applyRelativeGrayscale(gray) {
 function computeSupersampleFactor(scale, outW, outH) {
     if (!(scale > 0) || scale >= 1) return 1;
 
-    // requested factor ~ 1/scale, but clamp
     let f = Math.round(1 / scale);
     if (f < 1) f = 1;
     if (f > MAX_SUPERSAMPLE_FACTOR) f = MAX_SUPERSAMPLE_FACTOR;
 
-    // cap by absolute pixel budget
     while (f > 1 && (outW * f) * (outH * f) > MAX_UPSAMPLE_PIXELS) {
         f--;
     }
@@ -468,7 +501,7 @@ self.onmessage = (e) => {
         fbH,
         cRe,
         cIm,
-        scale, // stage scale factor, now also used for supersample if < 1
+        scale,
 
         viewXMin,
         viewXMax,
@@ -476,19 +509,23 @@ self.onmessage = (e) => {
         viewYMax,
 
         relativeGray,
+        maxIter, // <--- NEW
     } = msg;
 
     const outW = fbW | 0;
     const outH = fbH | 0;
     if (!outW || !outH) return;
 
+    // clamp iterations (keeps shader compile sane)
+    let mi = parseInt(maxIter, 10);
+    if (!Number.isFinite(mi)) mi = DEFAULT_MAX_ITER;
+    mi = Math.max(1, Math.min(50000, mi)); // adjust upper bound if you want
+
     const viewRect =
         viewXMin == null || viewXMax == null || viewYMin == null || viewYMax == null
             ? null
             : { xMin: +viewXMin, xMax: +viewXMax, yMin: +viewYMin, yMax: +viewYMax };
 
-    // Legacy: scale >= 1 means "render exactly fbW x fbH".
-    // New: scale < 1 means "internally supersample, then downsample back to fbW x fbH".
     const ssFactor = computeSupersampleFactor(+scale, outW, outH);
     const upW = outW * ssFactor;
     const upH = outH * ssFactor;
@@ -497,7 +534,7 @@ self.onmessage = (e) => {
     let backend = "gpu";
 
     try {
-        grayUp = renderJuliaWebGL(upW, upH, +cRe, +cIm, viewRect);
+        grayUp = renderJuliaWebGL(upW, upH, +cRe, +cIm, viewRect, mi);
     } catch (err) {
         self.postMessage({
             type: "error",
@@ -511,7 +548,7 @@ self.onmessage = (e) => {
     if (!grayUp) {
         backend = "cpu";
         try {
-            grayUp = renderJuliaCPU(upW, upH, +cRe, +cIm, viewRect);
+            grayUp = renderJuliaCPU(upW, upH, +cRe, +cIm, viewRect, mi);
         } catch (err) {
             self.postMessage({
                 type: "error",
@@ -521,13 +558,11 @@ self.onmessage = (e) => {
         }
     }
 
-    // Downsample if supersampled
     let gray = grayUp;
     if (ssFactor > 1) {
         gray = downsampleBox(grayUp, upW, upH, outW, outH, ssFactor);
     }
 
-    // Relative grayscale after final resolution is known
     const useRelative = !!relativeGray;
     let grayscaleMode = "absolute";
     if (useRelative) {
@@ -537,7 +572,7 @@ self.onmessage = (e) => {
     self.postMessage({
         type: "status",
         jobId,
-        backend, // "gpu" or "cpu"
+        backend,
         grayscale: grayscaleMode,
     });
 
@@ -550,6 +585,6 @@ self.onmessage = (e) => {
             scale,
             gray: gray.buffer,
         },
-        [gray.buffer],
+        [gray.buffer]
     );
 };
