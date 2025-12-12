@@ -47,7 +47,7 @@ const juliaMinBtn = juliaHeader
 
 if (fc) fc.value = "#00ffff";
 
-const decimal = 24;
+const decimal = 20;
 
 // ------------------ status ------------------
 

@@ -38,6 +38,13 @@ import "./style.css";
                             value="80"
                         />
                     </label>
+
+                    <label>
+                        Relative contrast<input
+                            type="checkbox"
+                            id="relativeMandel"
+                        />
+                    </label>
                 </div>
 
                 <div class="row">
@@ -47,10 +54,7 @@ import "./style.css";
                     </label>
 
                     <label>
-                        Relative contrast<input
-                            type="checkbox"
-                            id="relativeMandel"
-                        />
+                        Buddhabrot <input type="checkbox" id="buddha" />
                     </label>
                 </div>
             </div>
@@ -65,23 +69,30 @@ import "./style.css";
 
             <div id="juliaContent" class="appBody">
                 <canvas id="juliaCanvas"></canvas>
-                <div id="juliaStatus">No web worker</div>
-                <div id="juliaCoordinates">Loading Julia-coordinates...</div>
 
-                <label>
-                    Relative contrast<input type="checkbox" id="relative" />
-                </label>
+                <div class="juliaStatus">
+                    <div id="juliaStatus">No web worker</div>
+                    <div id="juliaCoordinates">
+                        Loading Julia-coordinates...
+                    </div>
+                </div>
 
-                <label class="flex">
-                    Glow
-                    <input
-                        type="range"
-                        id="juliaGlow"
-                        min="0"
-                        max="100"
-                        value="80"
-                    />
-                </label>
+                <div class="row">
+                    <label class="flex">
+                        Glow
+                        <input
+                            type="range"
+                            id="juliaGlow"
+                            min="0"
+                            max="100"
+                            value="80"
+                        />
+                    </label>
+
+                    <label>
+                        Relative contrast<input type="checkbox" id="relative" />
+                    </label>
+                </div>
 
                 <div id="juliaResizeHandle" class="resizeHandle colorChanger">
                 </div>

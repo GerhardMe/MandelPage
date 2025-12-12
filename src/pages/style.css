@@ -52,8 +52,11 @@ label {
 #juliaBox {
     top: var(--app-margin);
     right: var(--app-margin);
-    width: 530px;
-    height: 410px;
+
+    height: 400px;
+    width: 520px;
+    min-height: 280px;
+    min-width: 400px;
 }
 
 #info {
@@ -145,9 +148,13 @@ input[type="range"] {
     cursor: se-resize;
 }
 
-#juliaCoordinates {
+.juliaStatus {
     margin-top: 8px;
     text-align: right;
+
+    div {
+        margin-bottom: 0.3em;
+    }
 }
 
 /* ---------- minimized states (used by JS) ---------- */
