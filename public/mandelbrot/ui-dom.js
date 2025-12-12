@@ -420,7 +420,7 @@ function syncJuliaCanvasSize() {
     const boxRect = juliaBox.getBoundingClientRect();
 
     const width = Math.max(1, Math.floor(boxRect.width) - 24);
-    const height = Math.max(1, Math.floor(boxRect.height - 80));
+    const height = Math.max(1, Math.floor(boxRect.height - 135));
 
     juliaContent.style.width = width + "px";
     juliaContent.style.height = height + "px";
@@ -430,6 +430,23 @@ function syncJuliaCanvasSize() {
 
     juliaCanvas.width = width;
     juliaCanvas.height = height;
+}
+
+function forceJuliaPanelLayoutCommit() {
+    if (!juliaBox) return;
+
+    // Commit current computed size to inline styles so our math uses stable numbers.
+    const r = juliaBox.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+        juliaBox.style.width = Math.round(r.width) + "px";
+        juliaBox.style.height = Math.round(r.height) + "px";
+    }
+}
+
+function syncJuliaPanelNow() {
+    if (!juliaBox || juliaBox.classList.contains("minimized")) return;
+    syncJuliaCanvasSize();
+    requestJuliaRender();
 }
 
 function setupJuliaPanel() {
@@ -443,15 +460,29 @@ function setupJuliaPanel() {
         () => {
             syncJuliaCanvasSize();
             requestJuliaRender();
-        },
+        }
     );
 
+    // Fix wrong initial sizing: commit layout + sync after layout settles.
     requestAnimationFrame(() => {
         if (juliaBox.classList.contains("minimized")) return;
-        const jctx = juliaCanvas.getContext("2d");
-        if (jctx) {
-            jctx.fillStyle = "black";
-            jctx.fillRect(0, 0, juliaCanvas.width, juliaCanvas.height);
-        }
+
+        forceJuliaPanelLayoutCommit();
+        syncJuliaPanelNow();
+
+        // Second frame catches late CSS/font/layout changes.
+        requestAnimationFrame(() => {
+            syncJuliaPanelNow();
+        });
     });
+
+    // Also handle late-load layout shifts (images/fonts/CSS).
+    window.addEventListener(
+        "load",
+        () => {
+            forceJuliaPanelLayoutCommit();
+            syncJuliaPanelNow();
+        },
+        { once: true }
+    );
 }
