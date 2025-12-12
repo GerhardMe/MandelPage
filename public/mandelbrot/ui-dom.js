@@ -12,7 +12,9 @@ const info = document.getElementById("info");
 const controls = document.getElementById("controls");
 const controlsHeader = document.getElementById("controlsHeader");
 const fc = document.getElementById("fc");
-const bw = document.getElementById("bw");
+const mandelGlow = document.getElementById("mandelGlow");
+const juliaGlow = document.getElementById("juliaGlow");
+
 const fillInside = document.getElementById("fillInside");
 const statusEl = document.getElementById("status");
 
@@ -317,6 +319,48 @@ function setupMinimizeBehavior() {
         });
     }
 
+}
+
+// ------------------ palette controls ------------------
+
+if (fc) {
+    fc.addEventListener("input", () => {
+        updateColorChangers();
+        recolorFromLastGray();
+        recolorJuliaFromLastGray();
+    });
+}
+
+if (mandelGlow) {
+    mandelGlow.addEventListener("input", () => {
+        recolorFromLastGray();
+    });
+}
+
+if (juliaGlow) {
+    juliaGlow.addEventListener("input", () => {
+        recolorJuliaFromLastGray();
+    });
+}
+
+if (fillInside) {
+    fillInside.addEventListener("change", () => {
+        fillInterior = fillInside.checked ? 1 : 0;
+
+        if (workerReady && currentJobId != null) {
+            worker.postMessage({ type: "cancel", jobId: currentJobId });
+        }
+        currentJobId = null;
+        jobInFlight = false;
+        currentStage = -1;
+        stagePending = false;
+
+        // Mandelbrot worker still uses fillInterior in the math
+        requestFullRender();
+
+        // For Julia, interior fill is handled in colorizeGray only
+        recolorJuliaFromLastGray();
+    });
 }
 
 // ------------------ Julia panel ------------------

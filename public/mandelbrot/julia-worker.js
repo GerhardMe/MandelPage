@@ -51,20 +51,21 @@ const MAX_ITER = 300;
 const BAILOUT_RADIUS = 4.0;
 const BAILOUT_SQ = BAILOUT_RADIUS * BAILOUT_RADIUS;
 
-// ------------- WebGL2 state -------------
+// ------------- WebGL state -------------
 
 let glCanvas = null;
 let gl = null;
 let program = null;
 let posBuffer = null;
+let isWebGL2 = false;
 
 let aPositionLoc = -1;
 let uResolutionLoc = null;
 let uCParamLoc = null;
 let uViewRectLoc = null; // xMin, xMax, yMin, yMax
 
-// Vertex shader: fullscreen quad
-const VS_SOURCE = `#version 300 es
+// Vertex shader: fullscreen quad (WebGL2)
+const VS_SOURCE_WEBGL2 = `#version 300 es
 in vec2 a_position;
 out vec2 v_uv;
 void main() {
@@ -73,10 +74,8 @@ void main() {
 }
 `;
 
-// Fragment shader: Julia set, outputs *linear grayscale* in 0..1
-// If u_viewRect encodes a proper rect (xMin < xMax), we use it.
-// Otherwise we fall back to the old symmetric framing.
-const FS_SOURCE = `#version 300 es
+// Fragment shader: Julia set, outputs *linear grayscale* in 0..1 (WebGL2)
+const FS_SOURCE_WEBGL2 = `#version 300 es
 precision highp float;
 
 in vec2 v_uv;
@@ -92,21 +91,17 @@ const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
 void main() {
     vec2 z;
 
-    // Detect whether we have a valid view rect
     bool hasView =
         (u_viewRect.x < u_viewRect.y) &&
         (u_viewRect.z < u_viewRect.w);
 
     if (hasView) {
-        // Map v_uv in [0,1]^2 into [xMin,xMax] x [yMin,yMax]
         float x = mix(u_viewRect.x, u_viewRect.y, v_uv.x);
         float y = mix(u_viewRect.z, u_viewRect.w, v_uv.y);
         z = vec2(x, y);
     } else {
-        // Legacy symmetric framing around 0 with fixed scale
         float aspect = u_resolution.x / u_resolution.y;
         float scale = 1.5;
-
         float x = (v_uv.x - 0.5) * 2.0 * scale * aspect;
         float y = (v_uv.y - 0.5) * 2.0 * scale;
         z = vec2(x, y);
@@ -130,12 +125,77 @@ void main() {
     }
 
     bool isInterior = !escaped;
-
-    // Normalized escape value: 1.0 for interior, [0,1) otherwise
     float gNorm = isInterior ? 1.0 : (escapeIter / float(maxIter));
-
     float g = clamp(gNorm, 0.0, 1.0);
     outColor = vec4(g, g, g, 1.0);
+}
+`;
+
+// Vertex shader: fullscreen quad (WebGL1)
+const VS_SOURCE_WEBGL1 = `
+attribute vec2 a_position;
+varying vec2 v_uv;
+void main() {
+    v_uv = a_position * 0.5 + 0.5;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+// Fragment shader: Julia set, outputs *linear grayscale* in 0..1 (WebGL1)
+// All int->float conversions are explicit to satisfy GLSL ES 1.00.
+const FS_SOURCE_WEBGL1 = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec2 u_resolution;
+uniform vec2 u_c;           // (cRe, cIm)
+uniform vec4 u_viewRect;    // (xMin, xMax, yMin, yMax)
+
+const int maxIter = ${MAX_ITER};
+const float bailoutSq = ${BAILOUT_RADIUS} * ${BAILOUT_RADIUS};
+
+void main() {
+    vec2 z;
+
+    bool hasView =
+        (u_viewRect.x < u_viewRect.y) &&
+        (u_viewRect.z < u_viewRect.w);
+
+    if (hasView) {
+        float x = mix(u_viewRect.x, u_viewRect.y, v_uv.x);
+        float y = mix(u_viewRect.z, u_viewRect.w, v_uv.y);
+        z = vec2(x, y);
+    } else {
+        float aspect = u_resolution.x / u_resolution.y;
+        float scale = 1.5;
+        float x = (v_uv.x - 0.5) * 2.0 * scale * aspect;
+        float y = (v_uv.y - 0.5) * 2.0 * scale;
+        z = vec2(x, y);
+    }
+
+    vec2 c = u_c;
+
+    float escapeIter = float(maxIter);
+    bool escaped = false;
+
+    for (int i = 0; i < maxIter; i++) {
+        float x2 = z.x * z.x - z.y * z.y + c.x;
+        float y2 = 2.0 * z.x * z.y + c.y;
+        z = vec2(x2, y2);
+
+        if (!escaped && dot(z, z) > bailoutSq) {
+            escaped = true;
+            escapeIter = float(i);  // explicit cast
+            break;
+        }
+    }
+
+    bool isInterior = !escaped;
+    float gNorm = isInterior ? 1.0 : (escapeIter / float(maxIter));
+    float g = clamp(gNorm, 0.0, 1.0);
+
+    gl_FragColor = vec4(g, g, g, 1.0);
 }
 `;
 
@@ -145,18 +205,38 @@ function createGLContext(width, height) {
     if (typeof OffscreenCanvas === "undefined") {
         return null;
     }
+
     try {
         glCanvas = new OffscreenCanvas(width, height);
-        gl = glCanvas.getContext("webgl2", {
+
+        // Try WebGL2 first.
+        let ctx = glCanvas.getContext("webgl2", {
             premultipliedAlpha: false,
             preserveDrawingBuffer: false,
         });
-        if (!gl) {
+
+        if (ctx) {
+            gl = ctx;
+            isWebGL2 = true;
+            return gl;
+        }
+
+        // Fallback to WebGL1.
+        ctx = glCanvas.getContext("webgl", {
+            premultipliedAlpha: false,
+            preserveDrawingBuffer: false,
+        });
+
+        if (!ctx) {
             glCanvas = null;
+            gl = null;
             return null;
         }
+
+        gl = ctx;
+        isWebGL2 = false;
         return gl;
-    } catch (_) {
+    } catch (err) {
         glCanvas = null;
         gl = null;
         return null;
@@ -178,8 +258,8 @@ function compileShader(type, source) {
 
 function safeLinkProgram(vs, fs) {
     const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
-    gl.attachShader(prog, vs); // order doesn't matter
     gl.linkProgram(prog);
     const ok = gl.getProgramParameter(prog, gl.LINK_STATUS);
     if (!ok) {
@@ -201,8 +281,11 @@ function initGL(width, height) {
     if (!createGLContext(width, height)) return false;
 
     try {
-        const vs = compileShader(gl.VERTEX_SHADER, VS_SOURCE);
-        const fs = compileShader(gl.FRAGMENT_SHADER, FS_SOURCE);
+        const vsSource = isWebGL2 ? VS_SOURCE_WEBGL2 : VS_SOURCE_WEBGL1;
+        const fsSource = isWebGL2 ? FS_SOURCE_WEBGL2 : FS_SOURCE_WEBGL1;
+
+        const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+        const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
         program = safeLinkProgram(vs, fs);
 
         gl.deleteShader(vs);
@@ -227,7 +310,13 @@ function initGL(width, height) {
         gl.disable(gl.DEPTH_TEST);
 
         return true;
-    } catch (_) {
+    } catch (err) {
+        self.postMessage({
+            type: "error",
+            message: "Julia WebGL init failed: " +
+                (err && err.message ? err.message : String(err)),
+        });
+
         glCanvas = null;
         gl = null;
         program = null;
@@ -240,7 +329,7 @@ function initGL(width, height) {
     }
 }
 
-// WebGL path: returns Uint8Array(gray) length = fbW*fbH
+// WebGL path: returns Uint8Array(gray) length = fbW*fbH.
 // viewRect may be null OR { xMin, xMax, yMin, yMax }.
 function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
     if (!initGL(fbW, fbH)) {
@@ -273,7 +362,7 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
             viewRect.yMax,
         );
     } else {
-        // Invalid/missing rect: signal "no view" to shader
+        // Invalid/missing rect: signal "no view" to shader.
         gl.uniform4f(uViewRectLoc, 0.0, 0.0, 0.0, 0.0);
     }
 
@@ -285,7 +374,7 @@ function renderJuliaWebGL(fbW, fbH, cRe, cIm, viewRect) {
     const gray = new Uint8Array(fbW * fbH);
     let gi = 0;
     for (let i = 0; i < rgba.length; i += 4) {
-        gray[gi++] = rgba[i]; // R channel; all channels are equal
+        gray[gi++] = rgba[i]; // R channel; all channels are equal.
     }
 
     return gray;
@@ -359,18 +448,16 @@ function renderJuliaCPU(fbW, fbH, cRe, cIm, viewRect) {
 function applyRelativeGrayscale(gray) {
     const len = gray.length;
 
-    // Find min/max among non-interior pixels (gray != 255).
     let minVal = 255;
     let maxVal = 0;
 
     for (let i = 0; i < len; i++) {
         const v = gray[i];
-        if (v === 255) continue; // keep interior as pure white, don't use in range
+        if (v === 255) continue; // interior
         if (v < minVal) minVal = v;
         if (v > maxVal) maxVal = v;
     }
 
-    // If everything is interior or range is degenerate, skip.
     if (minVal > maxVal || minVal === 255) return false;
     const range = maxVal - minVal;
     if (range <= 0) return false;
@@ -439,7 +526,12 @@ self.onmessage = (e) => {
             +cIm,
             viewRect,
         );
-    } catch (_) {
+    } catch (err) {
+        self.postMessage({
+            type: "error",
+            message: "Julia WebGL render error: " +
+                (err && err.message ? err.message : String(err)),
+        });
         gray = null;
     }
 
@@ -462,7 +554,6 @@ self.onmessage = (e) => {
         }
     }
 
-    // Optional relative grayscale remap
     const useRelative = !!relativeGray;
     let grayscaleMode = "absolute";
 
@@ -473,12 +564,11 @@ self.onmessage = (e) => {
         }
     }
 
-    // Status message indicating backend and grayscale mode for this job
     self.postMessage({
         type: "status",
         jobId,
-        backend,        // "gpu" or "cpu"
-        grayscale: grayscaleMode, // "absolute" or "relative"
+        backend,               // "gpu" or "cpu"
+        grayscale: grayscaleMode,
     });
 
     self.postMessage(

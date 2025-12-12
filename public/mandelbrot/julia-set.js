@@ -106,6 +106,7 @@ function cancelJuliaJob() {
 //   const juliaCanvas = document.getElementById("juliaCanvas");
 //   const canvas, fc, bw, fillInside, juliaCursorEl, juliaBox
 //   worldToScreen, screenToWorld, hexToRgb, colorizeGray,
+//   getJuliaGlowValue,
 //   setJuliaCursorStatus, updateJuliaFromCursor, setErrorStatus, etc.
 
 function syncJuliaCanvasSizeAndWorld() {
@@ -209,7 +210,7 @@ function buildJuliaParams() {
     const outH = juliaCanvas.height | 0;
     if (!outW || !outH) return null;
 
-    const raw = bw ? (parseInt(bw.value, 10) || 0) : 0;
+    const raw = juliaGlow ? (parseInt(juliaGlow.value, 10) || 0) : 0;
     const fillSnap = fillInside && fillInside.checked ? 1 : 0;
     const colorHex = fc && fc.value ? fc.value : "#00ffff";
     const color = hexToRgb(colorHex);
@@ -222,8 +223,8 @@ function buildJuliaParams() {
         cRe: juliaCursorWorldX,
         cIm: juliaCursorWorldY,
         color,          // ignored by worker, kept for API compat
-        raw,            // ignored
-        fillInterior: fillSnap, // ignored
+        raw,            // ignored by worker; coloring is done on main thread
+        fillInterior: fillSnap, // ignored by worker
 
         viewXMin: vr.xMin,
         viewXMax: vr.xMax,
@@ -588,7 +589,9 @@ function handleJuliaFrame(msg) {
     if (!stageW || !stageH) return;
 
     const grayArr = new Uint8Array(gray);
-    const colored = colorizeGray(grayArr);
+
+    // Use Julia's own glow factor; colorizeGray expects the glow value as second arg.
+    const colored = colorizeGray(grayArr, getJuliaGlowValue());
     const img = new ImageData(colored, stageW, stageH);
 
     if (

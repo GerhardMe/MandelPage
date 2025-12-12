@@ -210,43 +210,6 @@ if (juliaCursorEl) {
     juliaCursorEl.addEventListener("wheel", handleWheel, { passive: false });
 }
 
-// ------------------ palette controls ------------------
-
-if (fc) {
-    fc.addEventListener("input", () => {
-        updateColorChangers();
-        recolorFromLastGray();
-        recolorJuliaFromLastGray();
-    });
-}
-
-if (bw) {
-    bw.addEventListener("input", () => {
-        recolorFromLastGray();
-        recolorJuliaFromLastGray();
-    });
-}
-
-if (fillInside) {
-    fillInside.addEventListener("change", () => {
-        fillInterior = fillInside.checked ? 1 : 0;
-
-        if (workerReady && currentJobId != null) {
-            worker.postMessage({ type: "cancel", jobId: currentJobId });
-        }
-        currentJobId = null;
-        jobInFlight = false;
-        currentStage = -1;
-        stagePending = false;
-
-        // Mandelbrot worker still uses fillInterior in the math
-        requestFullRender();
-
-        // For Julia, interior fill is handled in colorizeGray only
-        recolorJuliaFromLastGray();
-    });
-}
-
 // ------------------ worker: Mandelbrot ------------------
 
 function startWorkerJob(stageIndex) {

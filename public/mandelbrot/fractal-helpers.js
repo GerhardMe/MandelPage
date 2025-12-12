@@ -170,15 +170,41 @@ window.addEventListener("resize", () => {
     requestJuliaRender();
 });
 
+// ------------------ glow helpers (Mandel vs Julia) ------------------
+
+function getMandelGlowValue() {
+    // Prefer a dedicated Mandel control if present
+    if (typeof mandelGlow !== "undefined" && mandelGlow && mandelGlow.value != null) {
+        return mandelGlow.value;
+    }
+    // Fallback to a generic glow slider if that's what exists
+    if (typeof glow !== "undefined" && glow && glow.value != null) {
+        return glow.value;
+    }
+    // Hard fallback: mid value
+    return 50;
+}
+
+function getJuliaGlowValue() {
+    if (typeof juliaGlow !== "undefined" && juliaGlow && juliaGlow.value != null) {
+        return juliaGlow.value;
+    }
+    // If no dedicated Julia control, mirror Mandel
+    return getMandelGlowValue();
+}
+
 // ------------------ drawing helpers ------------------
 
-function colorizeGray(gray) {
+function colorizeGray(gray, value) {
     const N = gray.length;
     const out = new Uint8ClampedArray(N * 4);
 
     const color = hexToRgb(fc.value);
-    const rawFull = parseInt(bw.value, 10) || 0;
-    const raw = Math.max(0, Math.min(100, rawFull)); // 0..100
+
+    const rawFull = parseInt(value, 10);
+    const raw = Number.isFinite(rawFull)
+        ? Math.max(0, Math.min(100, rawFull))
+        : 0; // 0..100
 
     const isLowBlur = raw <= 50;
     const isHighBlur = raw > 50;
@@ -250,7 +276,8 @@ function redrawFromBase() {
 }
 
 function redrawFullColored(gray, fbW, fbH) {
-    const colored = colorizeGray(gray);
+    // Mandelbrot uses its own glow control
+    const colored = colorizeGray(gray, getMandelGlowValue());
 
     bufCanvas.width = fbW;
     bufCanvas.height = fbH;
@@ -269,7 +296,7 @@ function recolorFromLastGray() {
     redrawFromBase();
 }
 
-// Julia recolor using same colorizeGray
+// Julia recolor using same colorizeGray but its own glow factor
 function recolorJuliaFromLastGray() {
     if (
         !juliaCanvas ||
@@ -282,7 +309,7 @@ function recolorJuliaFromLastGray() {
     const jctx = juliaCanvas.getContext("2d");
     if (!jctx) return;
 
-    const colored = colorizeGray(lastJuliaGray);
+    const colored = colorizeGray(lastJuliaGray, getJuliaGlowValue());
     const img = new ImageData(colored, lastJuliaFbW, lastJuliaFbH);
 
     const tmp = document.createElement("canvas");

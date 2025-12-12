@@ -17,7 +17,7 @@ import "./style.css";
                 >
             </div>
 
-            <div class="appBody" id="controlsContent">
+            <div class="appBody">
                 <div class="row">
                     <label>
                         Color <input type="color" id="fc" />
@@ -32,7 +32,7 @@ import "./style.css";
                         Glow
                         <input
                             type="range"
-                            id="bw"
+                            id="mandelGlow"
                             min="0"
                             max="100"
                             value="80"
@@ -53,6 +53,22 @@ import "./style.css";
                 <canvas id="juliaCanvas"></canvas>
                 <div id="juliaStatus">No web worker</div>
                 <div id="juliaCoordinates">Loading Julia-coordinates...</div>
+
+                <label>
+                    Relative contrast<input type="checkbox" id="relative" />
+                </label>
+
+                <label class="flex">
+                    Glow
+                    <input
+                        type="range"
+                        id="juliaGlow"
+                        min="0"
+                        max="100"
+                        value="80"
+                    />
+                </label>
+
                 <div id="juliaResizeHandle" class="resizeHandle colorChanger">
                 </div>
             </div>
