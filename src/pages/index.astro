@@ -2,12 +2,15 @@
 import Layout from "../layouts/main.astro";
 import { Content } from "./info.md";
 import "./style.css";
+import "./info.css";
 ---
 
 <Layout>
     <div id="app">
         <div id="canvasWrapper">
-            <div id="info" class="minimized"><Content /></div>
+            <div id="info" class="minimized">
+                <div class="feed"><Content /></div>
+            </div>
             <canvas id="view"></canvas>
         </div>
 

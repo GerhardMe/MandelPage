@@ -1,0 +1,121 @@
+#info {
+    overflow: scroll;
+    font-family: "Fira Sans", sans;
+
+    .feed {
+        padding: 1em;
+        margin: auto;
+
+        padding-top: 6em;
+        padding-bottom: 2em;
+
+        position: relative;
+        height: 100%;
+        max-width: 800px;
+        width: 100%;
+
+        line-height: 1.7;
+
+        a {
+            color: var(--color-text-link);
+
+            &:hover {
+                text-decoration: underline;
+            }
+        }
+
+        p {
+            margin-bottom: 1em;
+
+            img {
+                display: block;
+                margin: auto;
+                max-width: calc(100% - 2em);
+                max-height: 30em;
+
+                border-radius: 0.2em;
+                box-shadow: 0 0 8px var(--color-shadow);
+            }
+
+            img:before {
+                display: block;
+                padding: 4em;
+                text-align: center;
+                font-style: italic;
+                color: var(--color-bg-dark);
+            }
+        }
+
+        p:has(> img:only-child) {
+            padding: 2em 1em 2em 1em;
+        }
+
+        h1,
+        h2,
+        h3 {
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+        }
+
+        ul {
+            list-style: none;
+            padding-left: 1.5em;
+        }
+
+        ul li {
+            margin-bottom: 0.5em;
+        }
+
+        ul li::before {
+            content: "-";
+            margin-left: -0.9em;
+            margin-right: 0.5em;
+            font-weight: 600;
+        }
+
+        ol {
+            padding-left: 1.5em;
+            list-style: numbers;
+        }
+
+        ol li {
+            margin-bottom: 0.5em;
+        }
+
+        pre {
+            margin: 1em;
+            border-radius: 0.2em;
+            padding: 0.4em;
+        }
+
+        blockquote {
+            padding-left: 1em;
+            padding-right: 1em;
+            color: var(--color-text-blockquote);
+
+            border-left: 0.3em solid var(--color-text-blockquote);
+        }
+
+        table {
+            border-collapse: collapse;
+            margin: 1.5em;
+            width: calc(100% - 3em);
+            font-size: 0.9em;
+        }
+
+        table th,
+        table td {
+            padding: 0.5em 0.8em;
+            border-bottom: 1px solid var(--color-backdrop);
+            text-align: left;
+        }
+
+        table th {
+            font-weight: 600;
+        }
+
+        table tr:last-child td {
+            border-bottom: none;
+        }
+    }
+}
