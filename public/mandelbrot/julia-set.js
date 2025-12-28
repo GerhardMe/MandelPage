@@ -15,10 +15,10 @@ const HAS_JULIA_START =
 // ------------------ Julia view: world-rect for zoom/pan ------------------
 
 // World rectangle currently shown in the Julia canvas
-let juliaWorldXMin = -1.5;
-let juliaWorldXMax = 1.5;
-let juliaWorldYMin = -1.5;
-let juliaWorldYMax = 1.5;
+let juliaWorldXMin = -1.2;
+let juliaWorldXMax = 1.2;
+let juliaWorldYMin = -1.2;
+let juliaWorldYMax = 1.2;
 
 // Screen-space transform used only for responsive pan/zoom of last image.
 // This does NOT change the world rect until we "commit" after interaction.

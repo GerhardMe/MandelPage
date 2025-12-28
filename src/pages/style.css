@@ -222,12 +222,17 @@ input[type="number"] {
     text-decoration: underline;
 }
 
-.summon {
+.btn {
     border: 1px solid;
     border-radius: 3px;
-    padding: 2px 1em;
+    padding: 2px 5px;
     margin-left: 1em;
     cursor: pointer;
+}
+
+.btn:active {
+    border: 3px solid;
+    padding: 0px 3px;
 }
 
 /* ---------- julia cursor ---------- */

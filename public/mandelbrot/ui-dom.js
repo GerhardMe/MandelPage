@@ -18,6 +18,9 @@ const relativeJulia = document.getElementById("relativeJulia");
 const juliaIterations = document.getElementById("juliaIterations");
 const mandelIterations = document.getElementById("mandelIterations");
 const getCursor = document.getElementById("get");
+const juliaNorm = document.getElementById("normalize-julia");
+const mandelNorm = document.getElementById("normalize-mandel");
+
 
 const fillInside = document.getElementById("fillInside");
 const statusEl = document.getElementById("status");
@@ -349,6 +352,9 @@ function setupMinimizeBehavior() {
     if (optionsBtn) {
         optionsBtn.addEventListener("click", () => {
             const next = !isOptionsMinimized();
+            if (!isInfoMinimized()) {
+                setInfoMinimized(true);
+            }
             setOptionsMinimized(next);
         });
     }
@@ -356,6 +362,9 @@ function setupMinimizeBehavior() {
     if (juliaBtn) {
         juliaBtn.addEventListener("click", () => {
             const next = !isJuliaMinimized();
+            if (!isInfoMinimized()) {
+                setInfoMinimized(true);
+            }
             setJuliaMinimized(next);
         });
     }
@@ -440,6 +449,23 @@ if (getCursor) {
         const h = Math.round(canvas.getBoundingClientRect().height / 2);
 
         setJuliaCursorFromClient(w, h)
+    });
+}
+
+if (juliaNorm) {
+    juliaNorm.addEventListener("click", () => {
+        if (lastJuliaGray && lastJuliaGray.length > 0) {
+            lastJuliaGray = normalizeContrast(lastJuliaGray);
+            recolorJuliaNow();
+        }
+    });
+}
+if (mandelNorm) {
+    mandelNorm.addEventListener("click", () => {
+        if (lastGray && lastGray.length > 0) {
+            lastGray = normalizeContrast(lastGray);
+            recolorMandelNow();
+        }
     });
 }
 
