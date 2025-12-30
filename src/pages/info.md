@@ -4,7 +4,7 @@ It seems simple rules can and often will generate incredibly complex systems. Th
 
 This set was first defined and drawn by Robert W. Brooks and Peter Matelski in 1978. It has later gained widespread recognition and awe because of its mathematical richness and incredible beauty.
 
-This page renders the famous fractal on your machine. With this page you may zoom arbitrarily deep into the fractal and look at its differing aspects and regions. It uses WASM, WebGL and Web-workers to to distribute the computational load and allow for an arbitrarily deep zoom.
+This page renders this fractal on your machine. With this page you may look at bolth the Julia sets making upp the manddelbrot and the set itself at any depth. The page is built with WASM, WebGL and Web-workers to to distribute the computational load and allow for an arbitrarily deep zoom.
 
 The Mandelbrot itself is computed with this simple looking formula:
 
