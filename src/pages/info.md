@@ -1,12 +1,12 @@
 # Mandelbrot set
 
-It seems simple rules can and often will generate incredibly complex systems. This is famously demonstrated via fractals. A simple function if mapped out can generate a shape with incredible complexity. A shape with a finite area, but with a boundary that’s infinitely long. Of these fractals the Mandelbrot set is perhaps the most famous fractal there is.
+It seems simple rules can and often will generate incredibly complex systems. This is famously demonstrated via fractals. A simple function that if mapped out generates a shape with incredible complexity. An object with finite area, yet a boundary that’s infinitely long. Of these the Mandelbrot set is perhaps the most famous.
 
 This set was first defined and drawn by Robert W. Brooks and Peter Matelski in 1978. It has later gained widespread recognition and awe because of its mathematical richness and incredible beauty.
 
-This page renders the famous fractal on your machine. With this page you may zoom arbitrarily deep into the fractal and look at its differing aspects and regions.
+This page renders the famous fractal on your machine. With this page you may zoom arbitrarily deep into the fractal and look at its differing aspects and regions. It uses WASM, WebGL and Web-workers to to distribute the computational load and allow for an arbitrarily deep zoom.
 
-The Mandelbrot is computed with this simple looking formula:
+The Mandelbrot itself is computed with this simple looking formula:
 
 $$
 z_{n+1} = z_n^2 + c
