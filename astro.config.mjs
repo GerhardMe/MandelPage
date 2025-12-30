@@ -8,4 +8,6 @@ export default defineConfig({
         remarkPlugins: [remarkMath],
         rehypePlugins: [rehypeKatex],
     },
-});
+    site: 'https://yourusername.github.io',
+    base: '/MandelPage/',
+})
