@@ -1,13 +1,22 @@
 #info {
     overflow: scroll;
-    font-family: "Fira Sans", sans;
+    font-family: "Palatino Linotype", "Fira Sans", sans;
+
+    .exit {
+        text-align: right;
+        font-size: 2em;
+        padding-right: 0.5em;
+        font-weight: bold;
+
+        user-select: none;
+        cursor: pointer;
+    }
 
     .feed {
         padding: 1em;
         margin: auto;
 
         padding-top: 6em;
-        padding-bottom: 2em;
 
         position: relative;
         height: 100%;
@@ -15,6 +24,18 @@
         width: 100%;
 
         line-height: 1.7;
+
+
+
+        .me {
+            width: 100%;
+            text-align: center;
+
+            overflow: visible;
+
+            padding-top: 4em;
+            padding-bottom: 12em;
+        }
 
         a {
             color: var(--color-text-link);
@@ -44,6 +65,11 @@
                 font-style: italic;
                 color: var(--color-bg-dark);
             }
+        }
+
+        .katex {
+            margin: 1.3em 0em;
+
         }
 
         p:has(> img:only-child) {

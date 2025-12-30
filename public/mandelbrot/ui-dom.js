@@ -42,6 +42,7 @@ const juliaCoordinatesEl = document.getElementById("juliaCoordinates");
 const optionsBtn = document.getElementById("OptionsBtn");
 const juliaBtn = document.getElementById("JuliaBtn");
 const infoBtn = document.getElementById("infoBtn");
+const infoBtnExit = document.getElementById("infoBtnExit");
 
 
 // Minimize buttons ("─" in headers)
@@ -378,6 +379,12 @@ function setupMinimizeBehavior() {
                 setOptionsMinimized(true);
                 setJuliaMinimized(true);
             }
+        });
+    }
+
+    if (infoBtnExit) {
+        infoBtnExit.addEventListener("click", () => {
+            setInfoMinimized(true);
         });
     }
 

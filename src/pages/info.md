@@ -1,4 +1,4 @@
-### Mandelbrought
+# Mandelbrought set
 
 It seems simple rules can and often will generate incredibly complex systems. This is famously demonstrated via fractals. A simple function if mapped out can generate a shape with incredible complexity. A shape with a finite volume, but with a circumference that’s infinitely long. Of these fractals the Mandelbrot set is perhaps the most famous fractal there is.
 
@@ -23,8 +23,9 @@ $$
 $$
 z_{3} = (-0.5216 - 0.0128i)^2 - 0.5125 + 0.5213i
 $$
-
-and so on...
+$$
+\text{and so on...}
+$$
 
 If we map all values of \(z\) onto the complex plane, we see a shape. This shape is our Julia set. For this particular value of \(c\) it looks like the small image in the Julia-set viewer when you first load the page. This shape is itself fascinating and beautiful, and represents a traversal of the plane.
 

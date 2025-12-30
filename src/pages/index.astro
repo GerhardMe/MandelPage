@@ -9,7 +9,11 @@ import "./info.css";
     <div id="app">
         <div id="canvasWrapper">
             <div id="info" class="minimized">
-                <div class="feed"><Content /></div>
+                <div id="infoBtnExit" class="exit colorChanger">x</div>
+                <div class="feed">
+                    <Content />
+                    <p class="me">- written by Gerhard -</p>
+                </div>
             </div>
             <canvas id="view"></canvas>
         </div>
