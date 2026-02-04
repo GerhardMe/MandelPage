@@ -7,7 +7,7 @@
 #canvasWrapper {
     position: relative;
     overflow: hidden;
-    height: 100%;
+    flex: 1;
 }
 
 canvas {
@@ -44,13 +44,13 @@ label {
 
 /* palette left, julia right (their IDs still define placement) */
 #controls {
-    top: var(--app-margin);
+    top: calc(2.4em + var(--app-margin));
     left: var(--app-margin);
     min-width: 250px;
 }
 
 #juliaBox {
-    top: var(--app-margin);
+    top: calc(2.4em + var(--app-margin));
     right: var(--app-margin);
 
     height: 400px;
@@ -190,7 +190,7 @@ input[type="number"] {
     height: 2.4em;
     padding: 4px 8px;
     background: #0c0c0c;
-    border-top: 1px solid #3a3a3a;
+    border-bottom: 1px solid #3a3a3a;
     font-size: 11px;
 
     width: 100%;
