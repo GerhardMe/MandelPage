@@ -206,8 +206,8 @@ function startWorkerJob(stageIndex) {
     if (!workerReady) return;
     const stage = STAGES[stageIndex];
     const scale = stage.scale;
-    const fbW = fullW;
-    const fbH = fullH;
+    const fbW = fullW * canvasDpr;
+    const fbH = fullH * canvasDpr;
     if (!fbW || !fbH) return;
     const jobId = nextJobId++;
     currentJobId = jobId;
@@ -227,8 +227,8 @@ function startWorkerJob(stageIndex) {
         fillInterior: fillSnap,
         maxIter,
     });
-    setRenderStatus(
-        `render: stage ${stageIndex + 1}/${STAGES.length} scale=${scale} iter=${maxIter}`,
+    setRenderStatus(window.innerWidth < 768 ? ""
+        : `render: stage ${stageIndex + 1}/${STAGES.length} scale=${scale} iter=${maxIter}`,
     );
 }
 function handleWorkerScan(msg) {
@@ -237,11 +237,9 @@ function handleWorkerScan(msg) {
     if (currentStage !== STAGES.length - 1) return;
     const numRows = yEnd - yStart;
     if (numRows <= 0) return;
-    const destY = (yStart / fbH) * fullH;
-    const destH = (numRows / fbH) * fullH;
     baseCtx.setTransform(1, 0, 0, 1, 0, 0);
     baseCtx.fillStyle = fc.value;
-    baseCtx.fillRect(0, destY, fullW, destH);
+    baseCtx.fillRect(0, yStart, baseCanvas.width, numRows);
     baseValid = true;
     redrawFromBase();
 }
@@ -271,20 +269,8 @@ function handleWorkerPartial(msg) {
     bufCanvas.height = numRows;
     const img = new ImageData(coloredBand, fbW, numRows);
     bufCtx.putImageData(img, 0, 0);
-    const destY = (yStart / fbH) * fullH;
-    const destH = (numRows / fbH) * fullH;
     baseCtx.setTransform(1, 0, 0, 1, 0, 0);
-    baseCtx.drawImage(
-        bufCanvas,
-        0,
-        0,
-        fbW,
-        numRows,
-        0,
-        destY,
-        fullW,
-        destH,
-    );
+    baseCtx.drawImage(bufCanvas, 0, yStart);
     baseValid = true;
     redrawFromBase();
 }
@@ -312,11 +298,11 @@ function handleWorkerFrame(msg) {
     stagePending = currentStage < STAGES.length;
     if (!stagePending) {
         currentStage = -1;
-        setRenderStatus("idle");
+        setRenderStatus(window.innerWidth < 768 ? "" : "idle");
     } else {
         const nextScale = STAGES[currentStage].scale;
-        setRenderStatus(
-            `render: stage ${currentStage + 1}/${STAGES.length} scale=${nextScale}`,
+        setRenderStatus(window.innerWidth < 768 ? ""
+            : `render: stage ${currentStage + 1}/${STAGES.length} scale=${nextScale}`,
         );
     }
 }

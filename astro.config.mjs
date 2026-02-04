@@ -10,4 +10,7 @@ export default defineConfig({
     },
     site: 'https://mandel.page',
     base: '/',
+    server: {
+        host: '0.0.0.0'
+    }
 })

@@ -210,6 +210,7 @@ function updateJuliaCursorScreenPosition() {
     // if Julia box is minimized/hidden, don't bother
     if (juliaBox && juliaBox.classList.contains("minimized")) return;
     if (juliaBox && juliaBox.style.display === "none") return;
+    if (window.innerWidth < 768) return;
     const { sx, sy } = worldToScreen(juliaCursorWorldX, juliaCursorWorldY);
     juliaCursorEl.style.display = "block";
     juliaCursorEl.style.transform =

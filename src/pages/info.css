@@ -145,3 +145,14 @@
         }
     }
 }
+
+@media (max-width: 768px) {
+    
+    #info .feed {
+        padding-top: 1.5em;
+    }
+
+    #info .feed .katex {
+        font-size: 1em;
+    }
+}

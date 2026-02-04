@@ -71,8 +71,10 @@ function updateStatus() {
     if (status.render) parts.push(status.render);
     if (status.zoom) parts.push(status.zoom);
     if (status.error) parts.push(status.error);
-    if (status.cursor) parts.push(status.cursor);
-    if (status.juliaCursor) parts.push(status.juliaCursor);
+    // Hide cursor coordinates on mobile (screens < 768px wide)
+    const isMobile = window.innerWidth < 768;
+    if (!isMobile && status.cursor) parts.push(status.cursor);
+    if (!isMobile && status.juliaCursor) parts.push(status.juliaCursor);
     statusEl.textContent = parts.join(" | ");
 }
 

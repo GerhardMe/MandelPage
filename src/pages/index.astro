@@ -178,10 +178,12 @@ import "./info.css";
 <script is:inline src="/mandelbrot/julia-set.js"></script>
 <script is:inline>
     // Patch worldToScreen to account for statusbar at top
+    // Use getBoundingClientRect for accurate height including any scaling
     const _originalWorldToScreen = worldToScreen;
     worldToScreen = function(cx, cy) {
         const result = _originalWorldToScreen(cx, cy);
-        const statusBarHeight = document.getElementById('statusBar')?.offsetHeight || 0;
+        const statusBar = document.getElementById('statusBar');
+        const statusBarHeight = statusBar ? statusBar.getBoundingClientRect().height : 0;
         return { sx: result.sx, sy: result.sy + statusBarHeight };
     };
 </script>

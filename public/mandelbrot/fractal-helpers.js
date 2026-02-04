@@ -23,6 +23,8 @@ let lastJuliaFbH = 0;
 let viewScale = 1;
 let viewOffsetX = 0;
 let viewOffsetY = 0;
+// device pixel ratio for crisp rendering on high-DPI screens (capped at 2 for perf)
+let canvasDpr = 1;
 // ------------------ helpers ------------------
 function worldParamsFor(cX, cY, z) {
     if (!fullW || !fullH) {
@@ -107,14 +109,15 @@ function lockWorldPointToScreen(worldX, worldY, sx, sy) {
 }
 function resize() {
     const rect = canvas.getBoundingClientRect();
+    canvasDpr = Math.min(window.devicePixelRatio || 1, 2);
     const newW = Math.max(1, Math.floor(rect.width));
     const newH = Math.max(1, Math.floor(rect.height));
-    canvas.width = newW;
-    canvas.height = newH;
     fullW = newW;
     fullH = newH;
-    baseCanvas.width = fullW;
-    baseCanvas.height = fullH;
+    canvas.width = fullW * canvasDpr;
+    canvas.height = fullH * canvasDpr;
+    baseCanvas.width = fullW * canvasDpr;
+    baseCanvas.height = fullH * canvasDpr;
     baseValid = false;
     lastGray = null;
     if (workerReady) {
@@ -263,8 +266,8 @@ function colorizeGray(gray, opts = {}) {
 function redrawFromBase() {
     if (!baseValid) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, fullW, fullH);
-    ctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX * canvasDpr, viewOffsetY * canvasDpr);
     ctx.drawImage(baseCanvas, 0, 0);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
@@ -281,8 +284,8 @@ function redrawFullColored(gray, fbW, fbH) {
     const img = new ImageData(colored, fbW, fbH);
     bufCtx.putImageData(img, 0, 0);
     baseCtx.setTransform(1, 0, 0, 1, 0, 0);
-    baseCtx.clearRect(0, 0, fullW, fullH);
-    baseCtx.drawImage(bufCanvas, 0, 0, fbW, fbH, 0, 0, fullW, fullH);
+    baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+    baseCtx.drawImage(bufCanvas, 0, 0, fbW, fbH, 0, 0, baseCanvas.width, baseCanvas.height);
     baseValid = true;
 }
 function recolorFromLastGray() {
@@ -328,13 +331,13 @@ function bakeTransformIntoBase() {
     if (!baseValid) return;
     if (viewScale === 1 && viewOffsetX === 0 && viewOffsetY === 0) return;
     const tmp = document.createElement("canvas");
-    tmp.width = fullW;
-    tmp.height = fullH;
+    tmp.width = baseCanvas.width;
+    tmp.height = baseCanvas.height;
     const tctx = tmp.getContext("2d");
-    tctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX, viewOffsetY);
+    tctx.setTransform(viewScale, 0, 0, viewScale, viewOffsetX * canvasDpr, viewOffsetY * canvasDpr);
     tctx.drawImage(baseCanvas, 0, 0);
     baseCtx.setTransform(1, 0, 0, 1, 0, 0);
-    baseCtx.clearRect(0, 0, fullW, fullH);
+    baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
     baseCtx.drawImage(tmp, 0, 0);
     baseValid = true;
 }

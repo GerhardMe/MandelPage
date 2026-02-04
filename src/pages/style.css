@@ -285,3 +285,20 @@ input[type="number"] {
     width: calc(50% - 5px);
     height: calc(50% - 5px);
 }
+
+/* ---------- mobile ---------- */
+
+@media (max-width: 768px) {
+    #juliaBox,
+    #juliaCursor,
+    #JuliaBtn,
+    #JuliaBtn + span {
+        display: none;
+    }
+
+    input[type="range"] {
+        min-width: 120px;
+        width: 120px;
+    }
+}
+
